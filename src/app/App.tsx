@@ -1,32 +1,29 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { Toaster } from "sonner";
-import { Activity, BarChart2, BookOpen, PieChart, Lightbulb, ChevronLeft, ChevronRight } from "lucide-react";
+import { Activity, BarChart2, BookOpen, Lightbulb, ChevronLeft, ChevronRight } from "lucide-react";
 import { TC } from "./components/TerminalShared";
 import { usePortfolioSummary } from "./store";
 import { fmtINR, fmtINR2, fmtPct, gainColor } from "./components/TerminalShared";
 
 const OverviewScreen        = lazy(() => import("./components/OverviewScreen").then(m => ({ default: m.OverviewScreen })));
 const HoldingsScreen        = lazy(() => import("./components/HoldingsScreen").then(m => ({ default: m.HoldingsScreen })));
-const AnalysisScreen        = lazy(() => import("./components/AnalysisScreen").then(m => ({ default: m.AnalysisScreen })));
 const RecommendationsScreen = lazy(() => import("./components/RecommendationsScreen").then(m => ({ default: m.RecommendationsScreen })));
 
 const APP_VERSION = "3.2.0";
 const BUILD_DATE  = new Date().toISOString().split("T")[0];
 
-type Tab = "overview" | "holdings" | "analysis" | "recommendations";
+type Tab = "overview" | "holdings" | "recommendations";
 
 const TABS: { id: Tab; label: string; key: string; icon: React.ReactNode }[] = [
   { id: "overview",        label: "OVERVIEW",        key: "F1", icon: <BarChart2 style={{ width: 13, height: 13 }} /> },
   { id: "holdings",        label: "HOLDINGS",        key: "F2", icon: <BookOpen  style={{ width: 13, height: 13 }} /> },
-  { id: "analysis",        label: "ANALYSIS",        key: "F3", icon: <PieChart  style={{ width: 13, height: 13 }} /> },
-  { id: "recommendations", label: "RECOMMENDATIONS", key: "F4", icon: <Lightbulb style={{ width: 13, height: 13 }} /> },
+  { id: "recommendations", label: "RECOMMENDATIONS", key: "F3", icon: <Lightbulb style={{ width: 13, height: 13 }} /> },
 ];
 
 const CMD_HINTS = [
   { key: "F1", desc: "OVERVIEW" },
   { key: "F2", desc: "HOLDINGS" },
-  { key: "F3", desc: "ANALYSIS" },
-  { key: "F4", desc: "RECS" },
+  { key: "F3", desc: "RECS" },
   { key: "R",  desc: "REFRESH" },
   { key: "\\", desc: "SIDEBAR" },
 ];
@@ -125,8 +122,7 @@ export default function App() {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
     if (e.key === "F1") { e.preventDefault(); setTab("overview"); }
     if (e.key === "F2") { e.preventDefault(); setTab("holdings"); }
-    if (e.key === "F3") { e.preventDefault(); setTab("analysis"); }
-    if (e.key === "F4") { e.preventDefault(); setTab("recommendations"); }
+    if (e.key === "F3") { e.preventDefault(); setTab("recommendations"); }
     if (e.key === "r" || e.key === "R") setRefreshKey(k => k + 1);
     if (e.key === "\\") setSidebarOpen(s => !s);
   }, []);
@@ -330,7 +326,6 @@ export default function App() {
           <Suspense fallback={<ScreenSkeleton />}>
             {tab === "overview"        && <OverviewScreen onRefresh={() => setRefreshKey(k => k + 1)} key={refreshKey} />}
             {tab === "holdings"        && <HoldingsScreen />}
-            {tab === "analysis"        && <AnalysisScreen />}
             {tab === "recommendations" && <RecommendationsScreen />}
           </Suspense>
         </div>

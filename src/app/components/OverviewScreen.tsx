@@ -13,7 +13,7 @@
 import { useState, useEffect } from "react";
 import {
   PieChart, Pie, Cell,
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  Tooltip, ResponsiveContainer,
 } from "recharts";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -315,11 +315,11 @@ export function OverviewScreen({ onRefresh }: { onRefresh?: () => void }) {
         </div>
       </div>
 
-      {/* ── [4] Three-panel chart row ────────────────────────────────── */}
+      {/* ── [4] Two-panel chart row ────────────────────────────────── */}
       <div style={{
         flexShrink: 0,
         display: 'grid',
-        gridTemplateColumns: '200px 1fr 1fr',
+        gridTemplateColumns: '200px 1fr',
         gap: '1px',
         background: TC.border,
         borderBottom: `1px solid ${TC.border}`,
@@ -368,51 +368,7 @@ export function OverviewScreen({ onRefresh }: { onRefresh?: () => void }) {
           </div>
         </div>
 
-        {/* Panel B — Sector bar chart */}
-        <div style={{ padding: '10px 14px', background: TC.bg0 }}>
-          <SectionLabel>SECTOR EXPOSURE — TOP 8</SectionLabel>
-          <div style={{ marginTop: '6px' }}>
-            <ResponsiveContainer width="100%" height={100}>
-              <BarChart
-                data={sectorData.slice(0, 8)}
-                layout="vertical"
-                margin={{ left: 0, right: 40, top: 0, bottom: 0 }}
-              >
-                <XAxis
-                  type="number"
-                  tick={{ fill: TC.text4, fontSize: 8, fontFamily: 'IBM Plex Mono' }}
-                  tickFormatter={v => `${v.toFixed(0)}%`}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  width={68}
-                  tick={{ fill: TC.text3, fontSize: 8, fontFamily: 'IBM Plex Mono' }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip
-                  contentStyle={{ background: TC.bg2, border: `1px solid ${TC.border}`, borderRadius: '1px', fontFamily: TC.font, fontSize: '10px' }}
-                  formatter={(v: number) => [`${v.toFixed(1)}%`, 'Alloc']}
-                  cursor={{ fill: TC.bg3 }}
-                />
-                <Bar dataKey="pct" radius={[0, 1, 1, 0]} maxBarSize={10}>
-                  {sectorData.slice(0, 8).map(e => (
-                    <Cell
-                      key={`bar-${e.name}`}
-                      fill={e.pct > 25 ? TC.amber : (SECTOR_COLORS[e.name] || TC.green)}
-                      opacity={0.85}
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Panel C — Performance trend area chart */}
+        {/* Panel B — Performance trend area chart */}
         <PerformanceTrendChart finalValue={totVal} totalGainPct={totGainPct} />
       </div>
 

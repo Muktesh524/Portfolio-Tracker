@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import yfinance as yf
-from mftool import MFTool
+from mftool import Mftool
 
 # Initialize FastAPI app
 app = FastAPI(title="Portfolio Dashboard API", version="1.0.0")
@@ -28,7 +28,7 @@ app.add_middleware(
 )
 
 # Initialize mftool for MF data
-mf = MFTool()
+mf = Mftool()
 
 # ─── Pydantic Models ──────────────────────────────────────────────────────────
 

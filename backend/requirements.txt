@@ -1,6 +1,6 @@
 fastapi==0.115.1
 uvicorn==0.30.0
-mftool==1.8.1
+mftool==3.3
 yfinance==0.2.41
 pydantic==2.8.2
 python-dotenv==1.0.1

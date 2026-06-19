@@ -13,7 +13,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { Plus, Download, Trash2, Search, X, Upload, GripVertical, RotateCcw, Check } from "lucide-react";
+import { Plus, Download, Trash2, Search, X, Upload, GripVertical, RotateCcw, Check, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
   TC, GRID_BG, computeHoldings,
@@ -22,6 +22,7 @@ import {
   type Holding,
 } from "./TerminalShared";
 import { useHoldings, useHoldingActions } from "../store";
+import { fetchPortfolioSnapshot, checkBackendHealth } from "../api";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -232,6 +233,7 @@ export function HoldingsScreen() {
   const [sortKey,  setSortKey]     = useState<SortKey>("currentValue");
   const [sortDir,  setSortDir]     = useState<"asc" | "desc">("desc");
   const [importing, setImporting]  = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const fileRef                     = useRef<HTMLInputElement>(null);
 
   // Drag-and-drop state
@@ -425,6 +427,62 @@ export function HoldingsScreen() {
     toast("Holdings cleared");
   }
 
+  // ── Refresh prices from backend ──────────────────────────────────────────────
+
+  async function handleRefreshPrices() {
+    setRefreshing(true);
+    try {
+      const isHealthy = await checkBackendHealth();
+      if (!isHealthy) {
+        toast.error("Backend unavailable", { description: "Is http://localhost:8000 running?" });
+        setRefreshing(false);
+        return;
+      }
+
+      // Separate MF and stock identifiers
+      const mfIsins = holdings.filter(h => h.type === "MF").map(h => h.identifier);
+      const stocks = holdings.filter(h => h.type === "Stock").map(h => h.identifier);
+
+      // Fetch all prices at once
+      const snapshot = await fetchPortfolioSnapshot(mfIsins, stocks);
+
+      // Check for errors
+      if (Object.keys(snapshot.errors).length > 0) {
+        const errorList = Object.entries(snapshot.errors)
+          .filter(([k]) => k !== "_global")
+          .map(([k, v]) => `${k}: ${v}`)
+          .slice(0, 3)
+          .join(", ");
+        toast.warning("Some prices failed to fetch", { description: errorList || "See console for details" });
+      }
+
+      // Update holdings with new prices
+      let updatedCount = 0;
+      holdings.forEach(h => {
+        let newNav: number | null = null;
+
+        if (h.type === "MF" && snapshot.mf_navs[h.identifier]) {
+          newNav = snapshot.mf_navs[h.identifier];
+        } else if (h.type === "Stock" && snapshot.stock_prices[h.identifier]) {
+          newNav = snapshot.stock_prices[h.identifier];
+        }
+
+        if (newNav !== null && newNav !== h.currentNav) {
+          actions.update(h.id, { currentNav: newNav });
+          updatedCount++;
+        }
+      });
+
+      toast.success(`Prices refreshed`, {
+        description: `${updatedCount} of ${holdings.length} holdings updated`,
+      });
+    } catch (error) {
+      toast.error("Failed to refresh prices", { description: String(error) });
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   const labelStyle: React.CSSProperties = {
@@ -482,6 +540,10 @@ export function HoldingsScreen() {
               </TermBtn>
               <TermBtn variant="ghost" onClick={handleExport}>
                 <Download style={{ width: 11, height: 11 }} /> EXPORT
+              </TermBtn>
+              <TermBtn variant="ghost" onClick={handleRefreshPrices} disabled={refreshing}>
+                <RefreshCw style={{ width: 11, height: 11, animation: refreshing ? "spin 1s linear infinite" : "none" }} />
+                {refreshing ? "REFRESHING…" : "REFRESH PRICES"}
               </TermBtn>
               <TermBtn variant="ghost" onClick={handleReset}>
                 <RotateCcw style={{ width: 11, height: 11 }} /> RESET DEMO

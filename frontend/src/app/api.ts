@@ -258,6 +258,119 @@ export async function fetchPortfolioSnapshot(
   }
 }
 
+// ─── Monte Carlo Simulation ──────────────────────────────────────────────────
+
+export interface MonteCarloParams {
+  start_value: number;
+  annual_return: number;
+  annual_volatility: number;
+  years: number;
+  num_simulations: number;
+  num_sample_paths: number;
+}
+
+export interface HistogramBin {
+  bin_start: number;
+  bin_end: number;
+  bin_label: string;
+  count: number;
+  frequency: number;
+  above_start: boolean;
+}
+
+export interface PercentilePoint {
+  month: number;
+  p10: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  p90: number;
+}
+
+export interface MonteCarloResult {
+  sample_paths: number[][];
+  percentile_series: PercentilePoint[];
+  final_distribution: number[];
+  histogram_bins: HistogramBin[];
+  median: number;
+  p10: number;
+  p25: number;
+  p75: number;
+  p90: number;
+  mean: number;
+  prob_profit: number;
+  prob_double: number;
+  max_drawdown_median: number;
+  sharpe_estimate: number;
+  months: number;
+  assumptions: {
+    annual_return: number;
+    annual_volatility: number;
+    years: number;
+    num_simulations: number;
+    model: string;
+  };
+  timestamp: string;
+}
+
+export async function runMonteCarloAPI(params: MonteCarloParams): Promise<MonteCarloResult | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/monte-carlo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+
+    if (!res.ok) {
+      console.warn(`Monte Carlo API failed: ${res.statusText}`);
+      return null;
+    }
+
+    return await res.json();
+  } catch (error) {
+    console.error("Error running Monte Carlo simulation:", error);
+    return null;
+  }
+}
+
+// ─── Market Indices ──────────────────────────────────────────────────────────
+
+export interface IndexData {
+  label: string;
+  symbol: string;
+  value: number;
+  change: number;
+  changePct: number;
+  up: boolean;
+  error: string | null;
+}
+
+export interface IndicesResponse {
+  indices: IndexData[];
+  timestamp: string;
+}
+
+export async function fetchIndices(): Promise<IndicesResponse> {
+  try {
+    const cacheKey = "market-indices";
+    const cached = getCached<IndicesResponse>(cacheKey);
+    if (cached) return cached;
+
+    const res = await fetch(`${API_BASE}/api/indices`);
+    if (!res.ok) {
+      console.warn(`Failed to fetch indices: ${res.statusText}`);
+      return { indices: [], timestamp: new Date().toISOString() };
+    }
+
+    const data: IndicesResponse = await res.json();
+    setCached(cacheKey, data);
+    return data;
+  } catch (error) {
+    console.error("Error fetching indices:", error);
+    return { indices: [], timestamp: new Date().toISOString() };
+  }
+}
+
 // ─── Clear cache (useful for manual refresh) ──────────────────────────────────
 
 export function clearCache() {

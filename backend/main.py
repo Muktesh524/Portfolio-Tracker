@@ -257,6 +257,225 @@ def get_portfolio_snapshot(holdings: dict):
     }
 
 
+# ─── Monte Carlo Simulation ──────────────────────────────────────────────────
+
+class MonteCarloRequest(BaseModel):
+    start_value: float
+    annual_return: float      # e.g. 0.12 for 12%
+    annual_volatility: float  # e.g. 0.18 for 18%
+    years: int                # 1, 3, 5, 10
+    num_simulations: int = 2000
+    num_sample_paths: int = 5
+
+class PercentilePoint(BaseModel):
+    month: int
+    p10: float
+    p25: float
+    p50: float
+    p75: float
+    p90: float
+
+class MonteCarloResponse(BaseModel):
+    sample_paths: list[list[float]]
+    percentile_series: list[dict]
+    final_distribution: list[float]
+    histogram_bins: list[dict]
+    median: float
+    p10: float
+    p25: float
+    p75: float
+    p90: float
+    mean: float
+    prob_profit: float
+    prob_double: float
+    max_drawdown_median: float
+    sharpe_estimate: float
+    months: int
+    assumptions: dict
+
+
+@app.post("/api/monte-carlo")
+def run_monte_carlo(req: MonteCarloRequest):
+    """
+    Run a Monte Carlo simulation using Geometric Brownian Motion.
+
+    Performs num_simulations independent GBM paths over the specified
+    time horizon, then returns:
+      - Sample paths for visualisation
+      - Percentile series (p10/p25/p50/p75/p90 at each month)
+      - Final value distribution with histogram bins
+      - Summary statistics: median, mean, percentiles, prob of profit/doubling
+      - Estimated Sharpe ratio and median max drawdown
+    """
+    import math
+    import random
+    from datetime import datetime
+
+    months = req.years * 12
+    monthly_r = req.annual_return / 12
+    monthly_v = req.annual_volatility / math.sqrt(12)
+    drift = monthly_r - 0.5 * monthly_v * monthly_v
+
+    random.seed(42 + int(req.start_value) ^ req.years)
+
+    all_paths: list[list[float]] = []
+
+    for _ in range(req.num_simulations):
+        path = [req.start_value]
+        val = req.start_value
+        for _ in range(months):
+            shock = random.gauss(0, 1)
+            val = val * math.exp(drift + monthly_v * shock)
+            path.append(round(val, 2))
+        all_paths.append(path)
+
+    sample_paths = all_paths[:req.num_sample_paths]
+
+    percentile_series = []
+    for m in range(months + 1):
+        vals_at_m = sorted([p[m] for p in all_paths])
+        n = len(vals_at_m)
+        percentile_series.append({
+            "month": m,
+            "p10": round(vals_at_m[int(n * 0.10)], 2),
+            "p25": round(vals_at_m[int(n * 0.25)], 2),
+            "p50": round(vals_at_m[int(n * 0.50)], 2),
+            "p75": round(vals_at_m[int(n * 0.75)], 2),
+            "p90": round(vals_at_m[int(n * 0.90)], 2),
+        })
+
+    finals = sorted([p[-1] for p in all_paths])
+    n = len(finals)
+
+    mean_final = sum(finals) / n
+    profitable = sum(1 for v in finals if v > req.start_value)
+    doubled = sum(1 for v in finals if v >= req.start_value * 2)
+
+    max_drawdowns = []
+    median_path = [percentile_series[m]["p50"] for m in range(months + 1)]
+    peak = median_path[0]
+    worst_dd = 0.0
+    for v in median_path:
+        if v > peak:
+            peak = v
+        dd = (peak - v) / peak if peak > 0 else 0
+        if dd > worst_dd:
+            worst_dd = dd
+    max_drawdowns.append(worst_dd)
+
+    total_return = (mean_final / req.start_value) - 1
+    annualised_return = (1 + total_return) ** (1 / max(req.years, 1)) - 1
+    sharpe = annualised_return / req.annual_volatility if req.annual_volatility > 0 else 0
+
+    num_bins = 30
+    min_val = finals[0]
+    max_val = finals[-1]
+    bin_width = (max_val - min_val) / num_bins if max_val > min_val else 1
+    histogram_bins = []
+    for i in range(num_bins):
+        lo = min_val + i * bin_width
+        hi = lo + bin_width
+        count = sum(1 for v in finals if lo <= v < hi) if i < num_bins - 1 else sum(1 for v in finals if lo <= v <= hi)
+        histogram_bins.append({
+            "bin_start": round(lo, 2),
+            "bin_end": round(hi, 2),
+            "bin_label": f"₹{lo/1000:.0f}k",
+            "count": count,
+            "frequency": round(count / n * 100, 2),
+            "above_start": lo >= req.start_value,
+        })
+
+    return {
+        "sample_paths": sample_paths,
+        "percentile_series": percentile_series,
+        "final_distribution": [round(v, 2) for v in finals],
+        "histogram_bins": histogram_bins,
+        "median": round(finals[int(n * 0.50)], 2),
+        "p10": round(finals[int(n * 0.10)], 2),
+        "p25": round(finals[int(n * 0.25)], 2),
+        "p75": round(finals[int(n * 0.75)], 2),
+        "p90": round(finals[int(n * 0.90)], 2),
+        "mean": round(mean_final, 2),
+        "prob_profit": round(profitable / n * 100, 1),
+        "prob_double": round(doubled / n * 100, 1),
+        "max_drawdown_median": round(worst_dd * 100, 1),
+        "sharpe_estimate": round(sharpe, 2),
+        "months": months,
+        "assumptions": {
+            "annual_return": req.annual_return,
+            "annual_volatility": req.annual_volatility,
+            "years": req.years,
+            "num_simulations": req.num_simulations,
+            "model": "Geometric Brownian Motion",
+        },
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+# ─── Market Indices ──────────────────────────────────────────────────────────
+
+INDICES = {
+    "NIFTY 50":   "^NSEI",
+    "SENSEX":     "^BSESN",
+    "BANK NIFTY": "^NSEBANK",
+    "USD/INR":    "USDINR=X",
+}
+
+
+@app.get("/api/indices")
+def get_indices():
+    """
+    Fetch live values for major Indian market indices via yfinance.
+
+    Returns a list of index objects, each containing:
+      - label: Display name (e.g. "NIFTY 50")
+      - value: Current price / level
+      - change: Absolute change from previous close
+      - changePct: Percentage change from previous close
+      - up: Boolean — true if positive or flat
+
+    Indices that fail to fetch are returned with zeroed fallback values
+    and an error field so the frontend can degrade gracefully.
+    """
+    from datetime import datetime
+
+    results = []
+
+    for label, symbol in INDICES.items():
+        entry = {
+            "label": label,
+            "symbol": symbol,
+            "value": 0.0,
+            "change": 0.0,
+            "changePct": 0.0,
+            "up": True,
+            "error": None,
+        }
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.fast_info
+
+            current = float(info.last_price)
+            prev_close = float(info.previous_close)
+            change = current - prev_close
+            change_pct = (change / prev_close * 100) if prev_close != 0 else 0.0
+
+            entry["value"] = round(current, 2)
+            entry["change"] = round(change, 2)
+            entry["changePct"] = round(change_pct, 2)
+            entry["up"] = change >= 0
+
+        except Exception as e:
+            entry["error"] = str(e)
+
+        results.append(entry)
+
+    return {
+        "indices": results,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
 # ─── Root endpoint ───────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -272,6 +491,8 @@ def root():
             "stock_single": "GET /api/stock-price/{ticker}",
             "stock_batch": "POST /api/stock-prices",
             "portfolio": "POST /api/portfolio-snapshot",
+            "monte_carlo": "POST /api/monte-carlo",
+            "indices": "GET /api/indices",
         },
         "note": "All data sourced from mftool (AMFI) and yfinance (NSE)"
     }

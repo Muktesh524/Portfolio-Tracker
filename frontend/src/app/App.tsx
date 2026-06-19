@@ -4,6 +4,7 @@ import { Activity, BarChart2, BookOpen, Lightbulb, ChevronLeft, ChevronRight } f
 import { TC } from "./components/TerminalShared";
 import { usePortfolioSummary } from "./store";
 import { fmtINR, fmtINR2, fmtPct, gainColor } from "./components/TerminalShared";
+import { fetchIndices, type IndexData } from "./api";
 
 const OverviewScreen        = lazy(() => import("./components/OverviewScreen").then(m => ({ default: m.OverviewScreen })));
 const HoldingsScreen        = lazy(() => import("./components/HoldingsScreen").then(m => ({ default: m.HoldingsScreen })));
@@ -132,6 +133,33 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [handleKey]);
 
+  const [indices, setIndices] = useState<IndexData[]>([]);
+  const [indicesLoading, setIndicesLoading] = useState(true);
+  const [indicesLive, setIndicesLive] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function load() {
+      try {
+        const res = await fetchIndices();
+        if (!mounted) return;
+        if (res.indices.length > 0) {
+          setIndices(res.indices);
+          setIndicesLive(true);
+        }
+      } catch {
+        // keep whatever we have
+      } finally {
+        if (mounted) setIndicesLoading(false);
+      }
+    }
+
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, []);
+
   return (
     <div
       style={{
@@ -220,20 +248,44 @@ export default function App() {
           padding: '0 16px',
           borderLeft: `1px solid ${TC.border}`,
         }}>
-          {[
-            { label: "NIFTY 50",    val: "24,832.15", chg: "+0.43%",  up: true },
-            { label: "SENSEX",      val: "82,198.40", chg: "+0.38%",  up: true },
-            { label: "NIFTY MID",   val: "52,441.30", chg: "-0.12%",  up: false },
-            { label: "USD/INR",     val: "83.42",     chg: "-0.08%",  up: false },
-          ].map(idx => (
-            <div key={idx.label} style={{ display: 'flex', alignItems: 'baseline', gap: '5px' }}>
-              <span style={{ color: TC.text4, fontSize: '9px', letterSpacing: '0.08em' }}>{idx.label}</span>
-              <span style={{ color: TC.text, fontSize: '10px' }}>{idx.val}</span>
-              <span style={{ color: idx.up ? TC.green : TC.red, fontSize: '9px' }}>
-                {idx.up ? '▲' : '▼'} {idx.chg}
-              </span>
+          {indicesLoading ? (
+            <div style={{ display: 'flex', gap: '12px' }}>
+              {[1, 2, 3, 4].map(i => (
+                <div key={i} style={{
+                  width: '90px', height: '12px',
+                  background: TC.bg2, borderRadius: '1px',
+                  animation: 'pulse 1.5s ease-in-out infinite',
+                  animationDelay: `${i * 100}ms`,
+                }} />
+              ))}
             </div>
-          ))}
+          ) : indices.length > 0 ? (
+            <>
+              {indices.map(idx => (
+                <div key={idx.label} style={{ display: 'flex', alignItems: 'baseline', gap: '5px' }}>
+                  <span style={{ color: TC.text4, fontSize: '9px', letterSpacing: '0.08em' }}>{idx.label}</span>
+                  <span style={{ color: TC.text, fontSize: '10px' }}>
+                    {idx.value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                  <span style={{ color: idx.up ? TC.green : TC.red, fontSize: '9px' }}>
+                    {idx.up ? '▲' : '▼'} {idx.changePct >= 0 ? '+' : ''}{idx.changePct.toFixed(2)}%
+                  </span>
+                </div>
+              ))}
+              {indicesLive && (
+                <span style={{
+                  fontSize: '8px', letterSpacing: '0.1em', fontWeight: 600,
+                  color: TC.green, background: TC.green + '18',
+                  border: `1px solid ${TC.green}33`,
+                  padding: '1px 5px', borderRadius: '1px',
+                }}>LIVE</span>
+              )}
+            </>
+          ) : (
+            <span style={{ color: TC.text5, fontSize: '9px', letterSpacing: '0.08em' }}>
+              MARKET DATA UNAVAILABLE
+            </span>
+          )}
         </div>
       </div>
 

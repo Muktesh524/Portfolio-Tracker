@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { Toaster } from "sonner";
-import { Activity, BarChart2, BookOpen, Lightbulb, ChevronLeft, ChevronRight } from "lucide-react";
+import { Activity, BarChart2, BookOpen, Lightbulb, ChevronLeft, ChevronRight, LogOut, Loader2 } from "lucide-react";
 import { TC } from "./components/TerminalShared";
 import { usePortfolioSummary } from "./store";
 import { fmtINR, fmtINR2, fmtPct, gainColor } from "./components/TerminalShared";
 import { fetchIndices, type IndexData } from "./api";
+import { useAuth } from "./AuthContext";
+import { LoginScreen } from "./components/LoginScreen";
 
 const OverviewScreen        = lazy(() => import("./components/OverviewScreen").then(m => ({ default: m.OverviewScreen })));
 const HoldingsScreen        = lazy(() => import("./components/HoldingsScreen").then(m => ({ default: m.HoldingsScreen })));
@@ -95,6 +97,31 @@ function ScreenSkeleton() {
 // ─── Main app ─────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const { user, loading: authLoading, logout } = useAuth();
+
+  // Show loading while Firebase checks auth state
+  if (authLoading) {
+    return (
+      <div style={{
+        width: '100%', height: '100vh', background: TC.bg0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: TC.font,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <Loader2 style={{ width: 16, height: 16, color: TC.green, animation: 'spin 1s linear infinite' }} />
+          <span style={{ color: TC.text4, fontSize: '11px', letterSpacing: '0.08em' }}>INITIALIZING TERMINAL…</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Not logged in — show login screen
+  if (!user) return <LoginScreen />;
+
+  return <AppDashboard user={user} logout={logout} />;
+}
+
+function AppDashboard({ user, logout }: { user: { email: string | null }; logout: () => Promise<void> }) {
   const [tab,         setTab]         = useState<Tab>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [refreshKey,  setRefreshKey]  = useState(0);
@@ -404,7 +431,23 @@ export default function App() {
           ))}
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <span style={{ color: TC.text5, fontSize: '9px' }}>DATA: AMFI + NSE VIA MFTOOL/YFINANCE (EDUCATIONAL)</span>
+          <span style={{ color: TC.text5, fontSize: '9px' }}>DATA: FIREBASE + AMFI + NSE (EDUCATIONAL)</span>
+          <span style={{ color: TC.border, fontSize: '10px' }}>│</span>
+          <span style={{ color: TC.text4, fontSize: '9px' }}>{user.email}</span>
+          <button
+            onClick={logout}
+            style={{
+              background: 'none', border: `1px solid ${TC.border}`,
+              color: TC.text5, fontSize: '9px', fontFamily: TC.font,
+              padding: '1px 6px', borderRadius: '1px', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: '4px',
+              transition: 'all 80ms',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = TC.red; (e.currentTarget as HTMLButtonElement).style.borderColor = TC.red + '44'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = TC.text5; (e.currentTarget as HTMLButtonElement).style.borderColor = TC.border; }}
+          >
+            <LogOut style={{ width: 9, height: 9 }} /> LOGOUT
+          </button>
           <span style={{ color: TC.border, fontSize: '10px' }}>│</span>
           <span style={{ color: TC.text5, fontSize: '9px' }}>v{APP_VERSION}  ·  {BUILD_DATE}</span>
         </div>

@@ -6,3 +6,8 @@ dist/
 *.log
 venv/
 __pycache__/
+
+# Firebase secrets
+scripts/serviceAccountKey.json
+frontend/.env
+frontend/.env.local

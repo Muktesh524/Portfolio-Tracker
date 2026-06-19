@@ -258,6 +258,105 @@ export async function fetchPortfolioSnapshot(
   }
 }
 
+// ─── Mutual Fund Search ─────────────────────────────────────────────────────
+
+export interface MFSearchResult {
+  code: string;
+  name: string;
+}
+
+export interface MFSearchResponse {
+  query: string;
+  count: number;
+  results: MFSearchResult[];
+}
+
+export interface MFNavDetail {
+  code: string;
+  name: string;
+  nav: number;
+  date: string;
+  category: string;
+  type: string;
+}
+
+export async function searchMFSchemes(query: string): Promise<MFSearchResponse> {
+  try {
+    const cacheKey = `mf-search-${query.toLowerCase()}`;
+    const cached = getCached<MFSearchResponse>(cacheKey);
+    if (cached) return cached;
+
+    const res = await fetch(`${API_BASE}/api/mf/search?q=${encodeURIComponent(query)}`);
+    if (!res.ok) {
+      console.warn(`MF search failed: ${res.statusText}`);
+      return { query, count: 0, results: [] };
+    }
+
+    const data: MFSearchResponse = await res.json();
+    setCached(cacheKey, data);
+    return data;
+  } catch (error) {
+    console.error("Error searching MF schemes:", error);
+    return { query, count: 0, results: [] };
+  }
+}
+
+export async function fetchMFNavDetail(schemeCode: string): Promise<MFNavDetail | null> {
+  try {
+    const cacheKey = `mf-nav-detail-${schemeCode}`;
+    const cached = getCached<MFNavDetail>(cacheKey);
+    if (cached) return cached;
+
+    const res = await fetch(`${API_BASE}/api/mf/nav/${schemeCode}`);
+    if (!res.ok) {
+      console.warn(`MF NAV detail failed: ${res.statusText}`);
+      return null;
+    }
+
+    const data: MFNavDetail = await res.json();
+    setCached(cacheKey, data);
+    return data;
+  } catch (error) {
+    console.error("Error fetching MF NAV detail:", error);
+    return null;
+  }
+}
+
+// ─── Stock Search ───────────────────────────────────────────────────────────
+
+export interface StockSearchResult {
+  symbol: string;
+  name: string;
+  sector: string;
+}
+
+export interface StockSearchResponse {
+  query: string;
+  count: number;
+  results: StockSearchResult[];
+}
+
+export async function searchStocks(query: string): Promise<StockSearchResponse> {
+  try {
+    const cacheKey = `stock-search-${query.toLowerCase()}`;
+    const cached = getCached<StockSearchResponse>(cacheKey);
+    if (cached) return cached;
+
+    const res = await fetch(`${API_BASE}/api/stocks/search?q=${encodeURIComponent(query)}`);
+    if (!res.ok) {
+      console.warn(`Stock search failed: ${res.statusText}`);
+      return { query, count: 0, results: [] };
+    }
+
+    const data: StockSearchResponse = await res.json();
+    setCached(cacheKey, data);
+    return data;
+  } catch (error) {
+    console.error("Error searching stocks:", error);
+    return { query, count: 0, results: [] };
+  }
+}
+
 // ─── Monte Carlo Simulation ──────────────────────────────────────────────────
 
 export interface MonteCarloParams {

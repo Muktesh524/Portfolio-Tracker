@@ -13,7 +13,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { Plus, Download, Trash2, Search, X, Upload, GripVertical, RotateCcw, Check, RefreshCw } from "lucide-react";
+import { Plus, Download, Trash2, Search, X, Upload, GripVertical, RotateCcw, Check, RefreshCw, Loader2, PlusCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   TC, GRID_BG, computeHoldings,
@@ -22,25 +22,25 @@ import {
   type Holding,
 } from "./TerminalShared";
 import { useHoldings, useHoldingActions } from "../store";
-import { fetchPortfolioSnapshot, checkBackendHealth } from "../api";
+import {
+  fetchPortfolioSnapshot, checkBackendHealth,
+  fetchMFNavDetail,
+  fetchStockPrice,
+} from "../api";
+import {
+  searchStocksFirestore, searchMFFirestore,
+  type FirestoreStock, type FirestoreMF,
+} from "../firestoreSearch";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const MF_SEARCH: { code: string; name: string; category: string; nav: string }[] = [
-  { code: "122655", name: "Parag Parikh Flexi Cap Fund – Direct Growth",   category: "Flexi Cap",  nav: "92.14"  },
-  { code: "120716", name: "UTI Nifty 50 Index Fund – Direct Growth",        category: "Index",      nav: "152.34" },
-  { code: "118989", name: "Mirae Asset Large Cap Fund – Direct Growth",     category: "Large Cap",  nav: "118.92" },
-  { code: "101539", name: "Axis Bluechip Fund – Direct Growth",            category: "Large Cap",  nav: "61.44"  },
-  { code: "147663", name: "Motilal Oswal Nifty 500 Index Fund – Direct",    category: "Index",      nav: "24.88"  },
-  { code: "118550", name: "Nippon India Small Cap Fund – Direct Growth",    category: "Small Cap",  nav: "89.22"  },
-  { code: "102885", name: "DSP Tax Saver Fund (ELSS) – Direct Growth",      category: "ELSS",       nav: "112.34" },
-  { code: "100595", name: "ICICI Pru Technology Fund – Direct Growth",      category: "Sectoral",   nav: "228.17" },
-];
 
 const BLANK: Omit<Holding, "id"> = {
   type: "MF", name: "", shortName: "", identifier: "",
   units: 0, avgCost: 0, currentNav: 0, sector: "", invested: 0, notes: "",
 };
+
+type AddMode = "new" | "topup";
+type InputMode = "units" | "amount";
 
 type SortKey = "name" | "currentValue" | "gainLoss" | "gainLossPct" | "invested";
 
@@ -236,6 +236,31 @@ export function HoldingsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const fileRef                     = useRef<HTMLInputElement>(null);
 
+  // MF search state
+  const [mfQuery,       setMfQuery]       = useState("");
+  const [mfResults,     setMfResults]     = useState<FirestoreMF[]>([]);
+  const [mfSearching,   setMfSearching]   = useState(false);
+  const [mfSearchDone,  setMfSearchDone]  = useState(false);
+  const [fetchingNav,   setFetchingNav]   = useState(false);
+  const [addMode,       setAddMode]       = useState<AddMode>("new");
+  const [topupTarget,   setTopupTarget]   = useState<Holding | null>(null);
+  const [topupUnits,    setTopupUnits]    = useState(0);
+  const [topupCost,     setTopupCost]     = useState(0);
+  const mfSearchTimer                     = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Stock search state
+  const [stQuery,       setStQuery]       = useState("");
+  const [stResults,     setStResults]     = useState<FirestoreStock[]>([]);
+  const [stSearching,   setStSearching]   = useState(false);
+  const [stSearchDone,  setStSearchDone]  = useState(false);
+  const [fetchingPrice, setFetchingPrice] = useState(false);
+  const stSearchTimer                     = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Amount/Units input mode
+  const [inputMode,     setInputMode]     = useState<InputMode>("units");
+  const [amountValue,   setAmountValue]   = useState(0);
+  const [manualEntry,   setManualEntry]   = useState(false);
+
   // Drag-and-drop state
   const [dragIdx,  setDragIdx]  = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
@@ -427,6 +452,143 @@ export function HoldingsScreen() {
     toast("Holdings cleared");
   }
 
+  // ── MF search (debounced) ──────────────────────────────────────────────────
+
+  function handleMfSearch(q: string) {
+    setMfQuery(q);
+    setMfSearchDone(false);
+    if (mfSearchTimer.current) clearTimeout(mfSearchTimer.current);
+    if (q.length < 2) { setMfResults([]); setMfSearchDone(false); return; }
+    setMfSearching(true);
+    mfSearchTimer.current = setTimeout(async () => {
+      try {
+        const results = await searchMFFirestore(q);
+        setMfResults(results);
+      } catch {
+        setMfResults([]);
+      }
+      setMfSearching(false);
+      setMfSearchDone(true);
+    }, 350);
+  }
+
+  async function handleSelectMF(result: FirestoreMF) {
+    setMfResults([]);
+    setMfQuery("");
+    setMfSearchDone(false);
+    setFetchingNav(true);
+    const detail = await fetchMFNavDetail(result.scheme_code);
+    setFetchingNav(false);
+
+    const cleanName = result.name
+      .replace(/\s*-\s*Direct Plan\s*/i, "")
+      .replace(/\s*-\s*Growth\s*/i, "")
+      .replace(/\s*-\s*IDCW\s*/i, "")
+      .trim();
+
+    const nav = detail?.nav ?? 0;
+    setForm(f => ({
+      ...f,
+      type: "MF",
+      name: cleanName,
+      shortName: cleanName.slice(0, 20),
+      identifier: result.scheme_code,
+      currentNav: nav,
+      avgCost: nav,
+      sector: detail?.category || result.category || "",
+    }));
+    setInputMode("amount");
+    setAmountValue(0);
+    toast.success(`Selected: ${result.scheme_code}`, {
+      description: detail ? `NAV ₹${detail.nav} as of ${detail.date}` : "NAV lookup failed — enter manually",
+    });
+  }
+
+  // ── Stock search (debounced) ──────────────────────────────────────────────
+
+  function handleStSearch(q: string) {
+    setStQuery(q);
+    setStSearchDone(false);
+    if (stSearchTimer.current) clearTimeout(stSearchTimer.current);
+    if (q.length < 1) { setStResults([]); setStSearchDone(false); return; }
+    setStSearching(true);
+    stSearchTimer.current = setTimeout(async () => {
+      try {
+        const results = await searchStocksFirestore(q);
+        setStResults(results);
+      } catch {
+        setStResults([]);
+      }
+      setStSearching(false);
+      setStSearchDone(true);
+    }, 300);
+  }
+
+  async function handleSelectStock(result: FirestoreStock) {
+    setStResults([]);
+    setStQuery("");
+    setStSearchDone(false);
+    setFetchingPrice(true);
+    const ticker = result.symbol.endsWith(".NS") || result.symbol.endsWith(".BO") ? result.symbol : result.symbol + ".NS";
+    const price = await fetchStockPrice(ticker);
+    setFetchingPrice(false);
+
+    const cmp = price ?? 0;
+    setForm(f => ({
+      ...f,
+      type: "Stock",
+      name: result.name,
+      shortName: result.symbol.replace(".NS", ""),
+      identifier: ticker,
+      currentNav: cmp,
+      avgCost: cmp,
+      sector: result.sector,
+    }));
+    setInputMode("units");
+    setAmountValue(0);
+    toast.success(`Selected: ${ticker}`, {
+      description: price ? `CMP ₹${price.toFixed(2)}` : "Price lookup failed — enter manually",
+    });
+  }
+
+  // ── Top-up (add units to existing) ─────────────────────────────────────────
+
+  function handleStartTopup(h: Holding) {
+    setAddMode("topup");
+    setTopupTarget(h);
+    setTopupUnits(0);
+    setTopupCost(h.currentNav);
+    setShowForm(true);
+    setEditId(null);
+    setInputMode(h.type === "MF" ? "amount" : "units");
+    setAmountValue(0);
+  }
+
+  function handleTopupSubmit() {
+    if (!topupTarget || topupUnits <= 0) {
+      toast.error("Enter units to add");
+      return;
+    }
+    const h = topupTarget;
+    const newTotalUnits = h.units + topupUnits;
+    const newTotalInvested = h.invested + (topupUnits * topupCost);
+    const newAvgCost = newTotalInvested / newTotalUnits;
+
+    actions.update(h.id, {
+      units: parseFloat(newTotalUnits.toFixed(4)),
+      avgCost: parseFloat(newAvgCost.toFixed(4)),
+      invested: parseFloat(newTotalInvested.toFixed(2)),
+    });
+    toast.success("Units added (SIP top-up)", {
+      description: `+${topupUnits} units @ ₹${topupCost.toFixed(2)} → ${newTotalUnits.toFixed(3)} total`,
+    });
+    setTopupTarget(null);
+    setTopupUnits(0);
+    setTopupCost(0);
+    setShowForm(false);
+    setAddMode("new");
+  }
+
   // ── Refresh prices from backend ──────────────────────────────────────────────
 
   async function handleRefreshPrices() {
@@ -551,7 +713,7 @@ export function HoldingsScreen() {
               <TermBtn variant="danger" onClick={handleClear}>
                 <Trash2 style={{ width: 11, height: 11 }} /> CLEAR
               </TermBtn>
-              <TermBtn variant="primary" onClick={() => { setShowForm(true); setEditId(null); setForm({ ...BLANK }); }}>
+              <TermBtn variant="primary" onClick={() => { setShowForm(true); setEditId(null); setForm({ ...BLANK }); setAddMode("new"); setTopupTarget(null); setMfQuery(""); setMfResults([]); setMfSearchDone(false); setStQuery(""); setStResults([]); setStSearchDone(false); setInputMode("units"); setAmountValue(0); setManualEntry(false); }}>
                 <Plus style={{ width: 11, height: 11 }} /> ADD
               </TermBtn>
             </div>
@@ -561,7 +723,7 @@ export function HoldingsScreen() {
         {/* ── Empty state or Table ───────────────────────────────── */}
         {holdings.length === 0 ? (
           <EmptyState
-            onAdd={() => { setShowForm(true); setEditId(null); setForm({ ...BLANK }); }}
+            onAdd={() => { setShowForm(true); setEditId(null); setForm({ ...BLANK }); setAddMode("new"); setTopupTarget(null); }}
             onReset={handleReset}
             onImport={() => fileRef.current?.click()}
           />
@@ -698,16 +860,27 @@ export function HoldingsScreen() {
                         />
                       </Td>
 
-                      {/* Delete button */}
+                      {/* Top-up + Delete */}
                       <Td>
-                        <button
-                          onClick={e => { e.stopPropagation(); handleDelete(h.id); }}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: TC.text5, padding: '2px 4px' }}
-                          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = TC.red; }}
-                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = TC.text5; }}
-                        >
-                          <X style={{ width: 12, height: 12 }} />
-                        </button>
+                        <div style={{ display: 'flex', gap: '2px', justifyContent: 'center' }}>
+                          <button
+                            onClick={e => { e.stopPropagation(); handleStartTopup(h); }}
+                            title="Add units (SIP top-up)"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: TC.text5, padding: '2px 4px' }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = TC.green; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = TC.text5; }}
+                          >
+                            <PlusCircle style={{ width: 12, height: 12 }} />
+                          </button>
+                          <button
+                            onClick={e => { e.stopPropagation(); handleDelete(h.id); }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: TC.text5, padding: '2px 4px' }}
+                            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = TC.red; }}
+                            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = TC.text5; }}
+                          >
+                            <X style={{ width: 12, height: 12 }} />
+                          </button>
+                        </div>
                       </Td>
                     </tr>
                   );
@@ -754,149 +927,847 @@ export function HoldingsScreen() {
         )}
       </div>
 
-      {/* ── Add / Edit Side Panel ────────────────────────────────── */}
+      {/* ── Add / Edit / Top-Up Side Panel ────────────────────────── */}
       {showForm && (
         <div style={{
-          width: '296px', flexShrink: 0,
+          width: '320px', flexShrink: 0,
           borderLeft: `1px solid ${TC.border}`,
           background: TC.bg1,
           display: 'flex', flexDirection: 'column',
-          overflow: 'hidden',
           animation: 'fadeIn 120ms ease-out',
         }}>
           <PanelHeader
-            title={editId !== null ? "EDIT HOLDING" : "ADD NEW HOLDING"}
+            title={
+              addMode === "topup" ? "ADD UNITS (SIP TOP-UP)"
+                : editId !== null ? "EDIT HOLDING"
+                : "ADD NEW HOLDING"
+            }
             right={
               <button
-                onClick={() => setShowForm(false)}
+                onClick={() => { setShowForm(false); setAddMode("new"); setTopupTarget(null); setMfQuery(""); setMfResults([]); setMfSearchDone(false); setStQuery(""); setStResults([]); setStSearchDone(false); setManualEntry(false); }}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: TC.text4 }}
               >
                 <X style={{ width: 14, height: 14 }} />
               </button>
             }
           />
-          <div style={{
-            flex: 1, overflowY: 'auto', padding: '12px',
-            display: 'flex', flexDirection: 'column', gap: '10px',
-          }}>
-            {/* Type */}
-            <div>
-              <label style={labelStyle}>TYPE</label>
-              <select
-                value={form.type}
-                onChange={e => setForm(f => ({ ...f, type: e.target.value as 'MF' | 'Stock' }))}
-                style={{
-                  background: TC.bg0, border: `1px solid ${TC.border}`, color: TC.text,
-                  padding: '5px 8px', borderRadius: '1px', fontSize: '11px',
-                  fontFamily: TC.font, width: '100%', outline: 'none',
-                }}
-              >
-                <option value="MF">MF — MUTUAL FUND</option>
-                <option value="Stock">STOCK</option>
-              </select>
-            </div>
-            <div>
-              <label style={labelStyle}>DISPLAY NAME</label>
-              <TermInput value={form.name} onChange={v => setForm(f => ({ ...f, name: v }))} placeholder="e.g. Parag Parikh Flexi Cap" />
-            </div>
-            <div>
-              <label style={labelStyle}>{form.type === 'MF' ? 'SCHEME CODE' : 'NSE TICKER'}</label>
-              <TermInput value={form.identifier} onChange={v => setForm(f => ({ ...f, identifier: v }))} placeholder={form.type === 'MF' ? 'e.g. 122655' : 'e.g. RELIANCE.NS'} />
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-              <div>
-                <label style={labelStyle}>UNITS / QTY</label>
-                <TermInput type="number" value={form.units || ""} onChange={v => setForm(f => ({ ...f, units: parseFloat(v) || 0 }))} placeholder="0.000" />
-              </div>
-              <div>
-                <label style={labelStyle}>AVG COST ₹</label>
-                <TermInput type="number" value={form.avgCost || ""} onChange={v => setForm(f => ({ ...f, avgCost: parseFloat(v) || 0 }))} placeholder="0.00" />
-              </div>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-              <div>
-                <label style={labelStyle}>CURR NAV / CMP ₹</label>
-                <TermInput type="number" value={form.currentNav || ""} onChange={v => setForm(f => ({ ...f, currentNav: parseFloat(v) || 0 }))} placeholder="0.00" />
-              </div>
-              <div>
-                <label style={labelStyle}>INVESTED ₹</label>
-                <TermInput type="number" value={form.invested || ""} onChange={v => setForm(f => ({ ...f, invested: parseFloat(v) || 0 }))} placeholder="0.00" />
-              </div>
-            </div>
-            <div>
-              <label style={labelStyle}>SECTOR / CATEGORY</label>
-              <TermInput value={form.sector} onChange={v => setForm(f => ({ ...f, sector: v }))} placeholder="e.g. Large Cap, IT" />
-            </div>
-            <div>
-              <label style={labelStyle}>NOTES</label>
-              <TermInput value={form.notes} onChange={v => setForm(f => ({ ...f, notes: v }))} placeholder="Optional…" />
-            </div>
 
-            {/* Auto-calculate invested */}
-            {form.units > 0 && form.avgCost > 0 && (
+          {/* ── TOP-UP MODE ─────────────────────────────────── */}
+          {addMode === "topup" && topupTarget && (
+            <div style={{
+              flex: 1, overflowY: 'auto', padding: '12px',
+              display: 'flex', flexDirection: 'column', gap: '10px',
+            }}>
+              {/* Target holding info */}
               <div style={{
-                display: 'flex', alignItems: 'center', gap: '8px',
-                padding: '6px 8px',
-                background: TC.bg0, border: `1px solid ${TC.border2}`, borderRadius: '1px',
+                padding: '10px', background: TC.bg0,
+                border: `1px solid ${TC.green}33`, borderRadius: '1px',
               }}>
-                <span style={{ color: TC.text4, fontSize: '9px' }}>AUTO:</span>
-                <span style={{ color: TC.text3, fontSize: '10px' }}>
-                  {form.units} × ₹{form.avgCost.toFixed(2)} = {fmtINR2(form.units * form.avgCost)}
-                </span>
-                <button
-                  onClick={() => setForm(f => ({ ...f, invested: f.units * f.avgCost }))}
-                  style={{
-                    marginLeft: 'auto', background: 'none', border: `1px solid ${TC.green}33`,
-                    color: TC.green, fontSize: '8px', padding: '1px 5px', borderRadius: '1px',
-                    cursor: 'pointer', fontFamily: TC.font,
-                  }}
-                >
-                  <Check style={{ width: 9, height: 9, display: 'inline' }} /> USE
-                </button>
+                <div style={{ color: TC.text4, fontSize: '9px', letterSpacing: '0.12em', marginBottom: '6px' }}>
+                  EXISTING POSITION
+                </div>
+                <div style={{ color: TC.text, fontSize: '11px', marginBottom: '3px' }}>
+                  {topupTarget.name}
+                </div>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  <span style={{ color: TC.text4, fontSize: '10px' }}>
+                    <TypeBadge type={topupTarget.type} /> {topupTarget.identifier}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginTop: '8px' }}>
+                  <div>
+                    <span style={{ color: TC.text5, fontSize: '9px' }}>CURRENT UNITS</span>
+                    <div style={{ color: TC.text, fontSize: '12px' }}>{topupTarget.units.toFixed(3)}</div>
+                  </div>
+                  <div>
+                    <span style={{ color: TC.text5, fontSize: '9px' }}>AVG COST</span>
+                    <div style={{ color: TC.text, fontSize: '12px' }}>₹{topupTarget.avgCost.toFixed(2)}</div>
+                  </div>
+                  <div>
+                    <span style={{ color: TC.text5, fontSize: '9px' }}>INVESTED</span>
+                    <div style={{ color: TC.text, fontSize: '12px' }}>{fmtINR2(topupTarget.invested)}</div>
+                  </div>
+                  <div>
+                    <span style={{ color: TC.text5, fontSize: '9px' }}>CURR NAV</span>
+                    <div style={{ color: TC.green, fontSize: '12px' }}>₹{topupTarget.currentNav.toFixed(2)}</div>
+                  </div>
+                </div>
               </div>
-            )}
 
-            <TermBtn variant="primary" onClick={handleAdd}>
-              {editId !== null ? "UPDATE HOLDING" : "+ ADD HOLDING"}
-            </TermBtn>
-          </div>
-
-          {/* MF Scheme search helper */}
-          {form.type === "MF" && (
-            <div style={{ borderTop: `1px solid ${TC.border}`, flexShrink: 0 }}>
-              <PanelHeader title="SCHEME SEARCH (SAMPLE DATA)" />
-              <div style={{ overflowY: 'auto', maxHeight: '220px' }}>
-                {MF_SEARCH.map((r, i) => (
-                  <div
-                    key={r.code}
-                    onClick={() => setForm(f => ({
-                      ...f,
-                      name: r.name.replace(' – Direct Growth', '').replace(' – Direct', ''),
-                      identifier: r.code,
-                      sector: r.category,
-                      currentNav: parseFloat(r.nav),
-                    }))}
+              {/* Amount / Units toggle for top-up */}
+              <div>
+                <label style={labelStyle}>HOW WOULD YOU LIKE TO ENTER?</label>
+                <div style={{ display: 'flex', gap: '0' }}>
+                  <button
+                    onClick={() => setInputMode("amount")}
                     style={{
-                      padding: '7px 12px',
-                      borderBottom: `1px solid ${TC.border2}`,
-                      cursor: 'pointer',
-                      background: i % 2 === 0 ? TC.bg1 : TC.bg0,
+                      flex: 1, padding: '7px 8px', fontSize: '10px', fontFamily: TC.font,
+                      background: inputMode === "amount" ? TC.green + '18' : TC.bg0,
+                      border: `1px solid ${inputMode === "amount" ? TC.green + '66' : TC.border}`,
+                      borderRight: 'none',
+                      color: inputMode === "amount" ? TC.green : TC.text4,
+                      cursor: 'pointer', letterSpacing: '0.08em', transition: 'all 120ms',
                     }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = TC.bg2; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = i % 2 === 0 ? TC.bg1 : TC.bg0; }}
                   >
-                    <div style={{ color: TC.text, fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {r.name}
+                    ENTER AMOUNT ₹
+                  </button>
+                  <button
+                    onClick={() => setInputMode("units")}
+                    style={{
+                      flex: 1, padding: '7px 8px', fontSize: '10px', fontFamily: TC.font,
+                      background: inputMode === "units" ? TC.green + '18' : TC.bg0,
+                      border: `1px solid ${inputMode === "units" ? TC.green + '66' : TC.border}`,
+                      color: inputMode === "units" ? TC.green : TC.text4,
+                      cursor: 'pointer', letterSpacing: '0.08em', transition: 'all 120ms',
+                    }}
+                  >
+                    ENTER UNITS
+                  </button>
+                </div>
+              </div>
+
+              {/* Amount mode for top-up */}
+              {inputMode === "amount" && (
+                <div>
+                  <label style={labelStyle}>SIP AMOUNT ₹</label>
+                  <TermInput
+                    type="number"
+                    value={amountValue || ""}
+                    onChange={v => {
+                      const amt = parseFloat(v) || 0;
+                      setAmountValue(amt);
+                      if (topupCost > 0 && amt > 0) {
+                        setTopupUnits(parseFloat((amt / topupCost).toFixed(4)));
+                      }
+                    }}
+                    placeholder="e.g. 5000"
+                  />
+                  {amountValue > 0 && topupCost > 0 && (
+                    <div style={{
+                      marginTop: '6px', padding: '8px 10px',
+                      background: '#001A0A', border: `1px solid ${TC.green}22`, borderRadius: '1px',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: TC.text4, fontSize: '9px' }}>UNITS YOU'LL GET</span>
+                        <span style={{ color: TC.green, fontSize: '13px', fontWeight: 600 }}>
+                          {(amountValue / topupCost).toFixed(4)}
+                        </span>
+                      </div>
+                      <div style={{ color: TC.text5, fontSize: '9px', marginTop: '3px' }}>
+                        ₹{amountValue.toLocaleString("en-IN")} ÷ ₹{topupCost.toFixed(2)} = {(amountValue / topupCost).toFixed(4)} units
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '10px', marginTop: '2px' }}>
-                      <span style={{ color: TC.text4, fontSize: '9px' }}>{r.code}</span>
-                      <span style={{ color: TC.text4, fontSize: '9px' }}>{r.category}</span>
-                      <span style={{ color: TC.green, fontSize: '9px' }}>NAV ₹{r.nav}</span>
+                  )}
+                </div>
+              )}
+
+              {/* Units mode for top-up */}
+              {inputMode === "units" && (
+                <div>
+                  <label style={labelStyle}>NEW UNITS TO ADD</label>
+                  <TermInput
+                    type="number"
+                    value={topupUnits || ""}
+                    onChange={v => {
+                      const u = parseFloat(v) || 0;
+                      setTopupUnits(u);
+                      setAmountValue(u * topupCost);
+                    }}
+                    placeholder="e.g. 5.123"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label style={labelStyle}>PURCHASE PRICE PER UNIT ₹</label>
+                <TermInput
+                  type="number"
+                  value={topupCost || ""}
+                  onChange={v => {
+                    const cost = parseFloat(v) || 0;
+                    setTopupCost(cost);
+                    if (inputMode === "amount" && amountValue > 0 && cost > 0) {
+                      setTopupUnits(parseFloat((amountValue / cost).toFixed(4)));
+                    }
+                  }}
+                  placeholder="e.g. 92.14"
+                />
+              </div>
+
+              {/* Preview */}
+              {topupUnits > 0 && topupCost > 0 && (
+                <div style={{
+                  padding: '8px 10px', background: TC.bg0,
+                  border: `1px solid ${TC.border2}`, borderRadius: '1px',
+                }}>
+                  <div style={{ color: TC.text4, fontSize: '9px', letterSpacing: '0.12em', marginBottom: '6px' }}>
+                    AFTER TOP-UP
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
+                    <div>
+                      <span style={{ color: TC.text5, fontSize: '9px' }}>TOTAL UNITS</span>
+                      <div style={{ color: TC.green, fontSize: '11px' }}>
+                        {(topupTarget.units + topupUnits).toFixed(3)}
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ color: TC.text5, fontSize: '9px' }}>NEW AVG COST</span>
+                      <div style={{ color: TC.green, fontSize: '11px' }}>
+                        ₹{((topupTarget.invested + topupUnits * topupCost) / (topupTarget.units + topupUnits)).toFixed(2)}
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ color: TC.text5, fontSize: '9px' }}>TOTAL INVESTED</span>
+                      <div style={{ color: TC.text, fontSize: '11px' }}>
+                        {fmtINR2(topupTarget.invested + topupUnits * topupCost)}
+                      </div>
+                    </div>
+                    <div>
+                      <span style={{ color: TC.text5, fontSize: '9px' }}>THIS PURCHASE</span>
+                      <div style={{ color: TC.amber, fontSize: '11px' }}>
+                        {fmtINR2(topupUnits * topupCost)}
+                      </div>
                     </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
+
+              <TermBtn variant="primary" onClick={handleTopupSubmit}>
+                <PlusCircle style={{ width: 11, height: 11 }} /> ADD UNITS
+              </TermBtn>
+              <TermBtn variant="ghost" onClick={() => { setAddMode("new"); setTopupTarget(null); setShowForm(false); }}>
+                CANCEL
+              </TermBtn>
             </div>
+          )}
+
+          {/* ── NEW / EDIT MODE ─────────────────────────────── */}
+          {addMode === "new" && (
+            <>
+              {/* Search area — sits OUTSIDE the scrollable form so dropdowns don't get clipped */}
+              {editId === null && (
+                <div style={{ padding: '12px 12px 0', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {/* Type selector */}
+                  <div>
+                    <label style={labelStyle}>TYPE</label>
+                    <select
+                      value={form.type}
+                      onChange={e => {
+                        setForm(f => ({ ...BLANK, type: e.target.value as 'MF' | 'Stock' }));
+                        setMfQuery(""); setMfResults([]); setMfSearchDone(false);
+                        setStQuery(""); setStResults([]); setStSearchDone(false);
+                      }}
+                      style={{
+                        background: TC.bg0, border: `1px solid ${TC.border}`, color: TC.text,
+                        padding: '5px 8px', borderRadius: '1px', fontSize: '11px',
+                        fontFamily: TC.font, width: '100%', outline: 'none',
+                      }}
+                    >
+                      <option value="MF">MF — MUTUAL FUND</option>
+                      <option value="Stock">STOCK</option>
+                    </select>
+                  </div>
+
+                  {/* ── MF Search ─────────────────────── */}
+                  {form.type === "MF" && (
+                    <div style={{ position: 'relative' }}>
+                      <label style={labelStyle}>SEARCH FUND BY NAME</label>
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        background: TC.bg0,
+                        border: `1px solid ${mfQuery.length >= 2 ? TC.green + '66' : TC.border}`,
+                        padding: '0 8px', borderRadius: '1px',
+                        transition: 'border-color 120ms',
+                      }}>
+                        {mfSearching ? (
+                          <Loader2 style={{ color: TC.green, width: 12, height: 12, animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+                        ) : (
+                          <Search style={{ color: TC.text4, width: 12, height: 12, flexShrink: 0 }} />
+                        )}
+                        <input
+                          value={mfQuery}
+                          onChange={e => handleMfSearch(e.target.value)}
+                          placeholder="e.g. parag parikh flexi"
+                          style={{
+                            background: 'transparent', border: 'none', color: TC.text,
+                            fontSize: '11px', outline: 'none', width: '100%', fontFamily: TC.font,
+                            padding: '6px 0',
+                          }}
+                        />
+                        {mfQuery && (
+                          <button
+                            onClick={() => { setMfQuery(""); setMfResults([]); setMfSearchDone(false); }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: TC.text5, padding: 0, flexShrink: 0 }}
+                          >
+                            <X style={{ width: 10, height: 10 }} />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Dropdown: results / searching / no results */}
+                      {(mfSearching || (mfSearchDone && mfQuery.length >= 2)) && (
+                        <div style={{
+                          position: 'absolute', top: '100%', left: 0, right: 0,
+                          background: TC.bg0, border: `1px solid ${TC.green}44`,
+                          borderTop: 'none', zIndex: 50,
+                          maxHeight: '280px', overflowY: 'auto',
+                          boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                        }}>
+                          {mfSearching && mfResults.length === 0 && (
+                            <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <Loader2 style={{ color: TC.green, width: 12, height: 12, animation: 'spin 1s linear infinite' }} />
+                              <span style={{ color: TC.text4, fontSize: '10px' }}>Searching funds…</span>
+                            </div>
+                          )}
+                          {!mfSearching && mfSearchDone && mfResults.length === 0 && (
+                            <div style={{ padding: '12px', color: TC.text5, fontSize: '10px', textAlign: 'center' }}>
+                              No funds found for "{mfQuery}"
+                            </div>
+                          )}
+                          {mfResults.map((r, i) => (
+                            <div
+                              key={r.scheme_code}
+                              onMouseDown={e => { e.preventDefault(); handleSelectMF(r); }}
+                              style={{
+                                padding: '8px 10px', cursor: 'pointer',
+                                borderBottom: `1px solid ${TC.border2}`,
+                                background: i % 2 === 0 ? TC.bg0 : TC.bg1,
+                              }}
+                              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = '#0D1A14'; }}
+                              onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = i % 2 === 0 ? TC.bg0 : TC.bg1; }}
+                            >
+                              <div style={{
+                                color: TC.text, fontSize: '10px',
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              }}>
+                                {r.name}
+                              </div>
+                              <div style={{ display: 'flex', gap: '8px', marginTop: '3px', alignItems: 'center' }}>
+                                <span style={{
+                                  color: TC.green, fontSize: '9px',
+                                  background: TC.green + '14', padding: '0 4px', borderRadius: '1px',
+                                }}>
+                                  {r.scheme_code}
+                                </span>
+                                {r.amc && (
+                                  <span style={{ color: TC.text5, fontSize: '9px' }}>{r.amc}</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── Stock Search ──────────────────── */}
+                  {form.type === "Stock" && (
+                    <div style={{ position: 'relative' }}>
+                      <label style={labelStyle}>SEARCH STOCK BY SYMBOL OR NAME</label>
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        background: TC.bg0,
+                        border: `1px solid ${stQuery.length >= 1 ? TC.green + '66' : TC.border}`,
+                        padding: '0 8px', borderRadius: '1px',
+                        transition: 'border-color 120ms',
+                      }}>
+                        {stSearching ? (
+                          <Loader2 style={{ color: TC.green, width: 12, height: 12, animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+                        ) : (
+                          <Search style={{ color: TC.text4, width: 12, height: 12, flexShrink: 0 }} />
+                        )}
+                        <input
+                          value={stQuery}
+                          onChange={e => handleStSearch(e.target.value)}
+                          placeholder="e.g. RELIANCE or Tata"
+                          style={{
+                            background: 'transparent', border: 'none', color: TC.text,
+                            fontSize: '11px', outline: 'none', width: '100%', fontFamily: TC.font,
+                            padding: '6px 0',
+                          }}
+                        />
+                        {stQuery && (
+                          <button
+                            onClick={() => { setStQuery(""); setStResults([]); setStSearchDone(false); }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: TC.text5, padding: 0, flexShrink: 0 }}
+                          >
+                            <X style={{ width: 10, height: 10 }} />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Dropdown */}
+                      {(stSearching || (stSearchDone && stQuery.length >= 1)) && (
+                        <div style={{
+                          position: 'absolute', top: '100%', left: 0, right: 0,
+                          background: TC.bg0, border: `1px solid ${TC.green}44`,
+                          borderTop: 'none', zIndex: 50,
+                          maxHeight: '280px', overflowY: 'auto',
+                          boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                        }}>
+                          {stSearching && stResults.length === 0 && (
+                            <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <Loader2 style={{ color: TC.green, width: 12, height: 12, animation: 'spin 1s linear infinite' }} />
+                              <span style={{ color: TC.text4, fontSize: '10px' }}>Searching NSE stocks…</span>
+                            </div>
+                          )}
+                          {!stSearching && stSearchDone && stResults.length === 0 && (
+                            <div style={{ padding: '12px', color: TC.text5, fontSize: '10px', textAlign: 'center' }}>
+                              No stocks found for "{stQuery}"
+                            </div>
+                          )}
+                          {stResults.map((r, i) => (
+                            <div
+                              key={r.symbol}
+                              onMouseDown={e => { e.preventDefault(); handleSelectStock(r); }}
+                              style={{
+                                padding: '8px 10px', cursor: 'pointer',
+                                borderBottom: `1px solid ${TC.border2}`,
+                                background: i % 2 === 0 ? TC.bg0 : TC.bg1,
+                              }}
+                              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = '#0D1A14'; }}
+                              onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = i % 2 === 0 ? TC.bg0 : TC.bg1; }}
+                            >
+                              <div style={{
+                                display: 'flex', alignItems: 'center', gap: '8px',
+                              }}>
+                                <span style={{
+                                  color: TC.green, fontSize: '10px', fontWeight: 600,
+                                  background: TC.green + '14', padding: '1px 5px', borderRadius: '1px',
+                                  flexShrink: 0,
+                                }}>
+                                  {r.symbol.replace(".NS", "")}
+                                </span>
+                                <span style={{
+                                  color: TC.text, fontSize: '10px',
+                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                }}>
+                                  {r.name}
+                                </span>
+                              </div>
+                              <div style={{ color: TC.text5, fontSize: '9px', marginTop: '2px' }}>
+                                {r.sector} · {r.exchange || "NSE"}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Fetching indicator */}
+                  {(fetchingNav || fetchingPrice) && (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      padding: '6px 8px', background: TC.bg0,
+                      border: `1px solid ${TC.green}33`, borderRadius: '1px',
+                    }}>
+                      <Loader2 style={{ color: TC.green, width: 12, height: 12, animation: 'spin 1s linear infinite' }} />
+                      <span style={{ color: TC.green, fontSize: '10px' }}>
+                        {fetchingNav ? "Fetching latest NAV…" : "Fetching current price…"}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Selected indicator */}
+                  {form.identifier && !fetchingNav && !fetchingPrice && (
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      padding: '6px 8px', background: '#001A0A',
+                      border: `1px solid ${TC.green}33`, borderRadius: '1px',
+                    }}>
+                      <Check style={{ color: TC.green, width: 11, height: 11 }} />
+                      <span style={{ color: TC.green, fontSize: '10px' }}>
+                        {form.identifier} — {form.type === "MF" ? "NAV" : "CMP"} ₹{form.currentNav.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Scrollable form fields */}
+              <div style={{
+                flex: 1, overflowY: 'auto', padding: '12px',
+                display: 'flex', flexDirection: 'column', gap: '10px',
+              }}>
+                {/* ── EDIT MODE — full manual form ──────────── */}
+                {editId !== null && (
+                  <>
+                    <div>
+                      <label style={labelStyle}>TYPE</label>
+                      <select
+                        value={form.type}
+                        onChange={e => setForm(f => ({ ...f, type: e.target.value as 'MF' | 'Stock' }))}
+                        style={{
+                          background: TC.bg0, border: `1px solid ${TC.border}`, color: TC.text,
+                          padding: '5px 8px', borderRadius: '1px', fontSize: '11px',
+                          fontFamily: TC.font, width: '100%', outline: 'none',
+                        }}
+                      >
+                        <option value="MF">MF — MUTUAL FUND</option>
+                        <option value="Stock">STOCK</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>DISPLAY NAME</label>
+                      <TermInput value={form.name} onChange={v => setForm(f => ({ ...f, name: v }))} placeholder="e.g. Parag Parikh Flexi Cap" />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>{form.type === 'MF' ? 'SCHEME CODE' : 'NSE TICKER'}</label>
+                      <TermInput value={form.identifier} onChange={v => setForm(f => ({ ...f, identifier: v }))} placeholder={form.type === 'MF' ? 'e.g. 122655' : 'e.g. RELIANCE.NS'} />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <div>
+                        <label style={labelStyle}>UNITS / QTY</label>
+                        <TermInput type="number" value={form.units || ""} onChange={v => setForm(f => ({ ...f, units: parseFloat(v) || 0 }))} placeholder="0.000" />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>AVG COST ₹</label>
+                        <TermInput type="number" value={form.avgCost || ""} onChange={v => setForm(f => ({ ...f, avgCost: parseFloat(v) || 0 }))} placeholder="0.00" />
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <div>
+                        <label style={labelStyle}>CURR NAV / CMP ₹</label>
+                        <TermInput type="number" value={form.currentNav || ""} onChange={v => setForm(f => ({ ...f, currentNav: parseFloat(v) || 0 }))} placeholder="0.00" />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>INVESTED ₹</label>
+                        <TermInput type="number" value={form.invested || ""} onChange={v => setForm(f => ({ ...f, invested: parseFloat(v) || 0 }))} placeholder="0.00" />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>SECTOR / CATEGORY</label>
+                      <TermInput value={form.sector} onChange={v => setForm(f => ({ ...f, sector: v }))} placeholder="e.g. Large Cap, IT" />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>NOTES</label>
+                      <TermInput value={form.notes} onChange={v => setForm(f => ({ ...f, notes: v }))} placeholder="Optional…" />
+                    </div>
+                    <TermBtn variant="primary" onClick={handleAdd}>
+                      UPDATE HOLDING
+                    </TermBtn>
+                  </>
+                )}
+
+                {/* ── ADD MODE — streamlined customer flow ──── */}
+                {editId === null && (
+                  <>
+                    {/* Prompt to search if nothing selected yet */}
+                    {!form.identifier && !manualEntry && (
+                      <div style={{
+                        padding: '16px 12px', textAlign: 'center',
+                        color: TC.text5, fontSize: '10px', lineHeight: 1.7,
+                        border: `1px dashed ${TC.border}`, borderRadius: '1px',
+                      }}>
+                        {form.type === "MF"
+                          ? "Search for a mutual fund above to get started"
+                          : "Search for a stock above to get started"
+                        }
+                      </div>
+                    )}
+
+                    {/* Once an instrument is selected via search, show the streamlined entry */}
+                    {form.identifier && !manualEntry && (
+                      <>
+                        {/* Selected instrument summary card */}
+                        <div style={{
+                          padding: '10px', background: TC.bg0,
+                          border: `1px solid ${TC.green}33`, borderRadius: '1px',
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{
+                                color: TC.text, fontSize: '11px', fontWeight: 600,
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              }}>
+                                {form.name}
+                              </div>
+                              <div style={{ display: 'flex', gap: '6px', marginTop: '4px', alignItems: 'center' }}>
+                                <TypeBadge type={form.type} />
+                                <span style={{ color: TC.text4, fontSize: '9px' }}>{form.identifier}</span>
+                              </div>
+                            </div>
+                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                              <div style={{ color: TC.text5, fontSize: '8px', letterSpacing: '0.1em' }}>
+                                {form.type === "MF" ? "LATEST NAV" : "CMP"}
+                              </div>
+                              <div style={{ color: TC.green, fontSize: '14px', fontWeight: 600 }}>
+                                ₹{form.currentNav.toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+                          {form.sector && (
+                            <div style={{ color: TC.text5, fontSize: '9px', marginTop: '4px' }}>
+                              {form.sector}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Amount / Units toggle */}
+                        <div>
+                          <label style={labelStyle}>HOW WOULD YOU LIKE TO ENTER?</label>
+                          <div style={{ display: 'flex', gap: '0' }}>
+                            <button
+                              onClick={() => {
+                                setInputMode("amount");
+                                if (amountValue > 0 && form.currentNav > 0) {
+                                  setForm(f => ({ ...f, units: parseFloat((amountValue / f.currentNav).toFixed(4)) }));
+                                }
+                              }}
+                              style={{
+                                flex: 1,
+                                padding: '7px 8px', fontSize: '10px', fontFamily: TC.font,
+                                background: inputMode === "amount" ? TC.green + '18' : TC.bg0,
+                                border: `1px solid ${inputMode === "amount" ? TC.green + '66' : TC.border}`,
+                                borderRight: 'none',
+                                color: inputMode === "amount" ? TC.green : TC.text4,
+                                cursor: 'pointer', letterSpacing: '0.08em',
+                                transition: 'all 120ms',
+                              }}
+                            >
+                              ENTER AMOUNT ₹
+                            </button>
+                            <button
+                              onClick={() => { setInputMode("units"); }}
+                              style={{
+                                flex: 1,
+                                padding: '7px 8px', fontSize: '10px', fontFamily: TC.font,
+                                background: inputMode === "units" ? TC.green + '18' : TC.bg0,
+                                border: `1px solid ${inputMode === "units" ? TC.green + '66' : TC.border}`,
+                                color: inputMode === "units" ? TC.green : TC.text4,
+                                cursor: 'pointer', letterSpacing: '0.08em',
+                                transition: 'all 120ms',
+                              }}
+                            >
+                              ENTER UNITS
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Amount input mode */}
+                        {inputMode === "amount" && (
+                          <div>
+                            <label style={labelStyle}>INVESTMENT AMOUNT ₹</label>
+                            <TermInput
+                              type="number"
+                              value={amountValue || ""}
+                              onChange={v => {
+                                const amt = parseFloat(v) || 0;
+                                setAmountValue(amt);
+                                if (form.currentNav > 0 && amt > 0) {
+                                  const calcUnits = parseFloat((amt / form.currentNav).toFixed(4));
+                                  setForm(f => ({
+                                    ...f,
+                                    units: calcUnits,
+                                    avgCost: f.currentNav,
+                                    invested: amt,
+                                  }));
+                                } else {
+                                  setForm(f => ({ ...f, units: 0, invested: 0 }));
+                                }
+                              }}
+                              placeholder="e.g. 5000"
+                            />
+                            {/* Live calculation preview */}
+                            {amountValue > 0 && form.currentNav > 0 && (
+                              <div style={{
+                                marginTop: '6px', padding: '8px 10px',
+                                background: '#001A0A', border: `1px solid ${TC.green}22`,
+                                borderRadius: '1px',
+                              }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ color: TC.text4, fontSize: '9px' }}>UNITS YOU'LL GET</span>
+                                  <span style={{ color: TC.green, fontSize: '13px', fontWeight: 600 }}>
+                                    {(amountValue / form.currentNav).toFixed(4)}
+                                  </span>
+                                </div>
+                                <div style={{ color: TC.text5, fontSize: '9px', marginTop: '3px' }}>
+                                  ₹{amountValue.toLocaleString("en-IN")} ÷ ₹{form.currentNav.toFixed(2)} = {(amountValue / form.currentNav).toFixed(4)} units
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Units input mode */}
+                        {inputMode === "units" && (
+                          <div>
+                            <label style={labelStyle}>{form.type === "Stock" ? "QUANTITY (SHARES)" : "UNITS ALLOTTED"}</label>
+                            <TermInput
+                              type="number"
+                              value={form.units || ""}
+                              onChange={v => {
+                                const u = parseFloat(v) || 0;
+                                setForm(f => ({
+                                  ...f,
+                                  units: u,
+                                  avgCost: f.currentNav,
+                                  invested: u * f.currentNav,
+                                }));
+                                setAmountValue(u * form.currentNav);
+                              }}
+                              placeholder={form.type === "Stock" ? "e.g. 10" : "e.g. 5.123"}
+                            />
+                            {/* Live value preview */}
+                            {form.units > 0 && form.currentNav > 0 && (
+                              <div style={{
+                                marginTop: '6px', padding: '8px 10px',
+                                background: '#001A0A', border: `1px solid ${TC.green}22`,
+                                borderRadius: '1px',
+                              }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ color: TC.text4, fontSize: '9px' }}>TOTAL INVESTMENT</span>
+                                  <span style={{ color: TC.green, fontSize: '13px', fontWeight: 600 }}>
+                                    {fmtINR2(form.units * form.currentNav)}
+                                  </span>
+                                </div>
+                                <div style={{ color: TC.text5, fontSize: '9px', marginTop: '3px' }}>
+                                  {form.units} × ₹{form.currentNav.toFixed(2)} = {fmtINR2(form.units * form.currentNav)}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Avg cost override — collapsed by default, show only if user wants different cost */}
+                        {form.units > 0 && (
+                          <div>
+                            <label style={labelStyle}>AVG COST ₹ (PURCHASE PRICE)</label>
+                            <TermInput
+                              type="number"
+                              value={form.avgCost || ""}
+                              onChange={v => {
+                                const cost = parseFloat(v) || 0;
+                                setForm(f => ({ ...f, avgCost: cost, invested: f.units * cost }));
+                              }}
+                              placeholder="defaults to current NAV/CMP"
+                            />
+                            {form.avgCost > 0 && form.avgCost !== form.currentNav && (
+                              <div style={{
+                                marginTop: '3px', fontSize: '9px',
+                                color: form.avgCost < form.currentNav ? TC.green : TC.red,
+                              }}>
+                                {form.avgCost < form.currentNav ? "▲" : "▼"}{" "}
+                                {Math.abs(((form.currentNav - form.avgCost) / form.avgCost) * 100).toFixed(1)}% {form.avgCost < form.currentNav ? "gain" : "loss"} from purchase
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Optional notes */}
+                        <div>
+                          <label style={labelStyle}>NOTES (OPTIONAL)</label>
+                          <TermInput value={form.notes} onChange={v => setForm(f => ({ ...f, notes: v }))} placeholder="e.g. SIP since Jan 2024" />
+                        </div>
+
+                        {/* Summary before submission */}
+                        {form.units > 0 && form.avgCost > 0 && (
+                          <div style={{
+                            padding: '10px', background: TC.bg0,
+                            border: `1px solid ${TC.border}`, borderRadius: '1px',
+                          }}>
+                            <div style={{ color: TC.text4, fontSize: '9px', letterSpacing: '0.12em', marginBottom: '8px' }}>
+                              SUMMARY
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                              <div>
+                                <span style={{ color: TC.text5, fontSize: '8px' }}>UNITS</span>
+                                <div style={{ color: TC.text, fontSize: '12px' }}>
+                                  {form.type === "Stock" ? form.units.toFixed(0) : form.units.toFixed(4)}
+                                </div>
+                              </div>
+                              <div>
+                                <span style={{ color: TC.text5, fontSize: '8px' }}>AVG COST</span>
+                                <div style={{ color: TC.text, fontSize: '12px' }}>₹{form.avgCost.toFixed(2)}</div>
+                              </div>
+                              <div>
+                                <span style={{ color: TC.text5, fontSize: '8px' }}>INVESTED</span>
+                                <div style={{ color: TC.amber, fontSize: '12px' }}>{fmtINR2(form.units * form.avgCost)}</div>
+                              </div>
+                              <div>
+                                <span style={{ color: TC.text5, fontSize: '8px' }}>CURRENT VALUE</span>
+                                <div style={{ color: TC.green, fontSize: '12px' }}>{fmtINR2(form.units * form.currentNav)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        <TermBtn variant="primary" onClick={() => {
+                          setForm(f => ({ ...f, invested: f.units * f.avgCost }));
+                          handleAdd();
+                        }}>
+                          <Plus style={{ width: 11, height: 11 }} /> ADD TO PORTFOLIO
+                        </TermBtn>
+                      </>
+                    )}
+
+                    {/* Manual entry link for power users */}
+                    {!form.identifier && !manualEntry && (
+                      <button
+                        onClick={() => setManualEntry(true)}
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          color: TC.text5, fontSize: '9px', fontFamily: TC.font,
+                          textDecoration: 'underline', padding: '4px 0',
+                        }}
+                      >
+                        Or enter details manually →
+                      </button>
+                    )}
+
+                    {/* Manual entry fallback — hidden behind link */}
+                    {manualEntry && (
+                      <>
+                        <div>
+                          <label style={labelStyle}>DISPLAY NAME</label>
+                          <TermInput value={form.name} onChange={v => setForm(f => ({ ...f, name: v }))} placeholder="e.g. Parag Parikh Flexi Cap" />
+                        </div>
+                        <div>
+                          <label style={labelStyle}>{form.type === 'MF' ? 'SCHEME CODE' : 'NSE TICKER'}</label>
+                          <TermInput value={form.identifier} onChange={v => setForm(f => ({ ...f, identifier: v }))} placeholder={form.type === 'MF' ? 'e.g. 122655' : 'e.g. RELIANCE.NS'} />
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                          <div>
+                            <label style={labelStyle}>UNITS / QTY</label>
+                            <TermInput type="number" value={form.units || ""} onChange={v => setForm(f => ({ ...f, units: parseFloat(v) || 0 }))} placeholder="0.000" />
+                          </div>
+                          <div>
+                            <label style={labelStyle}>AVG COST ₹</label>
+                            <TermInput type="number" value={form.avgCost || ""} onChange={v => setForm(f => ({ ...f, avgCost: parseFloat(v) || 0 }))} placeholder="0.00" />
+                          </div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                          <div>
+                            <label style={labelStyle}>CURR NAV / CMP ₹</label>
+                            <TermInput type="number" value={form.currentNav || ""} onChange={v => setForm(f => ({ ...f, currentNav: parseFloat(v) || 0 }))} placeholder="0.00" />
+                          </div>
+                          <div>
+                            <label style={labelStyle}>INVESTED ₹</label>
+                            <TermInput type="number" value={form.invested || ""} onChange={v => setForm(f => ({ ...f, invested: parseFloat(v) || 0 }))} placeholder="0.00" />
+                          </div>
+                        </div>
+                        <div>
+                          <label style={labelStyle}>SECTOR / CATEGORY</label>
+                          <TermInput value={form.sector} onChange={v => setForm(f => ({ ...f, sector: v }))} placeholder="e.g. Large Cap, IT" />
+                        </div>
+                        <div>
+                          <label style={labelStyle}>NOTES</label>
+                          <TermInput value={form.notes} onChange={v => setForm(f => ({ ...f, notes: v }))} placeholder="Optional…" />
+                        </div>
+                        <TermBtn variant="primary" onClick={() => {
+                          setForm(f => ({ ...f, invested: f.units * f.avgCost }));
+                          setManualEntry(false);
+                          handleAdd();
+                        }}>
+                          + ADD HOLDING
+                        </TermBtn>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}

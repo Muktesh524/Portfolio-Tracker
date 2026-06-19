@@ -261,6 +261,9 @@ export function HoldingsScreen() {
   const [amountValue,   setAmountValue]   = useState(0);
   const [manualEntry,   setManualEntry]   = useState(false);
 
+  // Validation state — tracks which fields the user has interacted with
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+
   // Drag-and-drop state
   const [dragIdx,  setDragIdx]  = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
@@ -645,6 +648,52 @@ export function HoldingsScreen() {
     }
   }
 
+  // ── Validation ──────────────────────────────────────────────────────────────
+
+  function touch(field: string) {
+    setTouched(t => ({ ...t, [field]: true }));
+  }
+
+  function getErrors(): Record<string, string> {
+    const e: Record<string, string> = {};
+    if (manualEntry) {
+      if (!form.name.trim()) e.name = "Name is required";
+      if (!form.identifier.trim()) e.identifier = form.type === "MF" ? "Scheme code is required" : "Ticker is required";
+      if (form.units <= 0) e.units = "Units must be greater than 0";
+      if (form.avgCost <= 0) e.avgCost = "Avg cost must be greater than 0";
+    } else {
+      if (!form.identifier) e.identifier = form.type === "MF" ? "Select a fund from search" : "Select a stock from search";
+      if (inputMode === "amount") {
+        if (amountValue <= 0) e.amount = "Enter an amount greater than 0";
+      } else {
+        if (form.units <= 0) e.units = form.type === "Stock" ? "Enter quantity (at least 1)" : "Enter units greater than 0";
+      }
+    }
+    return e;
+  }
+
+  const errors = addMode === "new" && editId === null ? getErrors() : {};
+  const isFormValid = Object.keys(errors).length === 0;
+
+  function getTopupErrors(): Record<string, string> {
+    const e: Record<string, string> = {};
+    if (inputMode === "amount") {
+      if (amountValue <= 0) e.amount = "Enter an amount greater than 0";
+    } else {
+      if (topupUnits <= 0) e.units = "Enter units greater than 0";
+    }
+    if (topupCost <= 0) e.cost = "Purchase price must be greater than 0";
+    return e;
+  }
+
+  const topupErrors = addMode === "topup" ? getTopupErrors() : {};
+  const isTopupValid = Object.keys(topupErrors).length === 0;
+
+  const errorStyle: React.CSSProperties = {
+    color: TC.red, fontSize: '9px', fontFamily: TC.font,
+    marginTop: '3px', letterSpacing: '0.04em',
+  };
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   const labelStyle: React.CSSProperties = {
@@ -713,7 +762,7 @@ export function HoldingsScreen() {
               <TermBtn variant="danger" onClick={handleClear}>
                 <Trash2 style={{ width: 11, height: 11 }} /> CLEAR
               </TermBtn>
-              <TermBtn variant="primary" onClick={() => { setShowForm(true); setEditId(null); setForm({ ...BLANK }); setAddMode("new"); setTopupTarget(null); setMfQuery(""); setMfResults([]); setMfSearchDone(false); setStQuery(""); setStResults([]); setStSearchDone(false); setInputMode("units"); setAmountValue(0); setManualEntry(false); }}>
+              <TermBtn variant="primary" onClick={() => { setShowForm(true); setEditId(null); setForm({ ...BLANK }); setAddMode("new"); setTopupTarget(null); setMfQuery(""); setMfResults([]); setMfSearchDone(false); setStQuery(""); setStResults([]); setStSearchDone(false); setInputMode("units"); setAmountValue(0); setManualEntry(false); setTouched({}); }}>
                 <Plus style={{ width: 11, height: 11 }} /> ADD
               </TermBtn>
             </div>
@@ -1034,6 +1083,7 @@ export function HoldingsScreen() {
                     type="number"
                     value={amountValue || ""}
                     onChange={v => {
+                      touch("topup_amount");
                       const amt = parseFloat(v) || 0;
                       setAmountValue(amt);
                       if (topupCost > 0 && amt > 0) {
@@ -1041,19 +1091,23 @@ export function HoldingsScreen() {
                       }
                     }}
                     placeholder="e.g. 5000"
+                    style={touched.topup_amount && topupErrors.amount ? { borderColor: TC.red } : undefined}
                   />
+                  {touched.topup_amount && topupErrors.amount && (
+                    <div style={errorStyle}>{topupErrors.amount}</div>
+                  )}
                   {amountValue > 0 && topupCost > 0 && (
                     <div style={{
-                      marginTop: '6px', padding: '8px 10px',
+                      marginTop: '6px', padding: '10px',
                       background: '#001A0A', border: `1px solid ${TC.green}22`, borderRadius: '1px',
                     }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: TC.text4, fontSize: '9px' }}>UNITS YOU'LL GET</span>
-                        <span style={{ color: TC.green, fontSize: '13px', fontWeight: 600 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ color: TC.text4, fontSize: '9px', letterSpacing: '0.08em' }}>UNITS YOU'LL GET</span>
+                        <span style={{ color: TC.green, fontSize: '15px', fontWeight: 600, fontFamily: TC.font }}>
                           {(amountValue / topupCost).toFixed(4)}
                         </span>
                       </div>
-                      <div style={{ color: TC.text5, fontSize: '9px', marginTop: '3px' }}>
+                      <div style={{ color: TC.text5, fontSize: '9px', marginTop: '4px' }}>
                         ₹{amountValue.toLocaleString("en-IN")} ÷ ₹{topupCost.toFixed(2)} = {(amountValue / topupCost).toFixed(4)} units
                       </div>
                     </div>
@@ -1069,12 +1123,17 @@ export function HoldingsScreen() {
                     type="number"
                     value={topupUnits || ""}
                     onChange={v => {
+                      touch("topup_units");
                       const u = parseFloat(v) || 0;
                       setTopupUnits(u);
                       setAmountValue(u * topupCost);
                     }}
                     placeholder="e.g. 5.123"
+                    style={touched.topup_units && topupErrors.units ? { borderColor: TC.red } : undefined}
                   />
+                  {touched.topup_units && topupErrors.units && (
+                    <div style={errorStyle}>{topupErrors.units}</div>
+                  )}
                 </div>
               )}
 
@@ -1084,6 +1143,7 @@ export function HoldingsScreen() {
                   type="number"
                   value={topupCost || ""}
                   onChange={v => {
+                    touch("topup_cost");
                     const cost = parseFloat(v) || 0;
                     setTopupCost(cost);
                     if (inputMode === "amount" && amountValue > 0 && cost > 0) {
@@ -1091,7 +1151,11 @@ export function HoldingsScreen() {
                     }
                   }}
                   placeholder="e.g. 92.14"
+                  style={touched.topup_cost && topupErrors.cost ? { borderColor: TC.red } : undefined}
                 />
+                {touched.topup_cost && topupErrors.cost && (
+                  <div style={errorStyle}>{topupErrors.cost}</div>
+                )}
               </div>
 
               {/* Preview */}
@@ -1132,7 +1196,10 @@ export function HoldingsScreen() {
                 </div>
               )}
 
-              <TermBtn variant="primary" onClick={handleTopupSubmit}>
+              <TermBtn variant="primary" disabled={!isTopupValid} onClick={() => {
+                setTouched(t => ({ ...t, topup_amount: true, topup_units: true, topup_cost: true }));
+                if (isTopupValid) handleTopupSubmit();
+              }}>
                 <PlusCircle style={{ width: 11, height: 11 }} /> ADD UNITS
               </TermBtn>
               <TermBtn variant="ghost" onClick={() => { setAddMode("new"); setTopupTarget(null); setShowForm(false); }}>
@@ -1212,16 +1279,27 @@ export function HoldingsScreen() {
                           borderTop: 'none', zIndex: 50,
                           maxHeight: '280px', overflowY: 'auto',
                           boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                          borderRadius: '0 0 2px 2px',
                         }}>
                           {mfSearching && mfResults.length === 0 && (
-                            <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <Loader2 style={{ color: TC.green, width: 12, height: 12, animation: 'spin 1s linear infinite' }} />
-                              <span style={{ color: TC.text4, fontSize: '10px' }}>Searching funds…</span>
+                            <div style={{ padding: '16px 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                              <Loader2 style={{ color: TC.green, width: 14, height: 14, animation: 'spin 1s linear infinite' }} />
+                              <span style={{ color: TC.text4, fontSize: '10px', letterSpacing: '0.06em' }}>Searching mutual funds…</span>
                             </div>
                           )}
                           {!mfSearching && mfSearchDone && mfResults.length === 0 && (
-                            <div style={{ padding: '12px', color: TC.text5, fontSize: '10px', textAlign: 'center' }}>
-                              No funds found for "{mfQuery}"
+                            <div style={{ padding: '16px 12px', textAlign: 'center' }}>
+                              <div style={{ color: TC.text5, fontSize: '10px', marginBottom: '4px' }}>
+                                No funds found for "<span style={{ color: TC.amber }}>{mfQuery}</span>"
+                              </div>
+                              <div style={{ color: TC.text5, fontSize: '9px', opacity: 0.6 }}>
+                                Try a different keyword or use manual entry below
+                              </div>
+                            </div>
+                          )}
+                          {mfResults.length > 0 && (
+                            <div style={{ padding: '4px 10px 3px', color: TC.text5, fontSize: '8px', letterSpacing: '0.1em', borderBottom: `1px solid ${TC.border2}` }}>
+                              {mfResults.length} RESULT{mfResults.length > 1 ? 'S' : ''}
                             </div>
                           )}
                           {mfResults.map((r, i) => (
@@ -1232,8 +1310,9 @@ export function HoldingsScreen() {
                                 padding: '8px 10px', cursor: 'pointer',
                                 borderBottom: `1px solid ${TC.border2}`,
                                 background: i % 2 === 0 ? TC.bg0 : TC.bg1,
+                                transition: 'background 80ms',
                               }}
-                              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = '#0D1A14'; }}
+                              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = TC.green + '0D'; }}
                               onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = i % 2 === 0 ? TC.bg0 : TC.bg1; }}
                             >
                               <div style={{
@@ -1242,13 +1321,21 @@ export function HoldingsScreen() {
                               }}>
                                 {r.name}
                               </div>
-                              <div style={{ display: 'flex', gap: '8px', marginTop: '3px', alignItems: 'center' }}>
+                              <div style={{ display: 'flex', gap: '6px', marginTop: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
                                 <span style={{
                                   color: TC.green, fontSize: '9px',
-                                  background: TC.green + '14', padding: '0 4px', borderRadius: '1px',
+                                  background: TC.green + '14', padding: '1px 5px', borderRadius: '1px',
                                 }}>
                                   {r.scheme_code}
                                 </span>
+                                {r.category && (
+                                  <span style={{
+                                    color: TC.amber, fontSize: '9px',
+                                    background: TC.amber + '14', padding: '1px 5px', borderRadius: '1px',
+                                  }}>
+                                    {r.category}
+                                  </span>
+                                )}
                                 {r.amc && (
                                   <span style={{ color: TC.text5, fontSize: '9px' }}>{r.amc}</span>
                                 )}
@@ -1304,16 +1391,27 @@ export function HoldingsScreen() {
                           borderTop: 'none', zIndex: 50,
                           maxHeight: '280px', overflowY: 'auto',
                           boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+                          borderRadius: '0 0 2px 2px',
                         }}>
                           {stSearching && stResults.length === 0 && (
-                            <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <Loader2 style={{ color: TC.green, width: 12, height: 12, animation: 'spin 1s linear infinite' }} />
-                              <span style={{ color: TC.text4, fontSize: '10px' }}>Searching NSE stocks…</span>
+                            <div style={{ padding: '16px 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                              <Loader2 style={{ color: TC.green, width: 14, height: 14, animation: 'spin 1s linear infinite' }} />
+                              <span style={{ color: TC.text4, fontSize: '10px', letterSpacing: '0.06em' }}>Searching NSE stocks…</span>
                             </div>
                           )}
                           {!stSearching && stSearchDone && stResults.length === 0 && (
-                            <div style={{ padding: '12px', color: TC.text5, fontSize: '10px', textAlign: 'center' }}>
-                              No stocks found for "{stQuery}"
+                            <div style={{ padding: '16px 12px', textAlign: 'center' }}>
+                              <div style={{ color: TC.text5, fontSize: '10px', marginBottom: '4px' }}>
+                                No stocks found for "<span style={{ color: TC.amber }}>{stQuery}</span>"
+                              </div>
+                              <div style={{ color: TC.text5, fontSize: '9px', opacity: 0.6 }}>
+                                Try the full company name or NSE symbol
+                              </div>
+                            </div>
+                          )}
+                          {stResults.length > 0 && (
+                            <div style={{ padding: '4px 10px 3px', color: TC.text5, fontSize: '8px', letterSpacing: '0.1em', borderBottom: `1px solid ${TC.border2}` }}>
+                              {stResults.length} RESULT{stResults.length > 1 ? 'S' : ''}
                             </div>
                           )}
                           {stResults.map((r, i) => (
@@ -1324,8 +1422,9 @@ export function HoldingsScreen() {
                                 padding: '8px 10px', cursor: 'pointer',
                                 borderBottom: `1px solid ${TC.border2}`,
                                 background: i % 2 === 0 ? TC.bg0 : TC.bg1,
+                                transition: 'background 80ms',
                               }}
-                              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = '#0D1A14'; }}
+                              onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = TC.green + '0D'; }}
                               onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = i % 2 === 0 ? TC.bg0 : TC.bg1; }}
                             >
                               <div style={{
@@ -1345,8 +1444,14 @@ export function HoldingsScreen() {
                                   {r.name}
                                 </span>
                               </div>
-                              <div style={{ color: TC.text5, fontSize: '9px', marginTop: '2px' }}>
-                                {r.sector} · {r.exchange || "NSE"}
+                              <div style={{ display: 'flex', gap: '6px', marginTop: '3px', alignItems: 'center' }}>
+                                <span style={{
+                                  color: TC.amber, fontSize: '9px',
+                                  background: TC.amber + '14', padding: '1px 5px', borderRadius: '1px',
+                                }}>
+                                  {r.sector}
+                                </span>
+                                <span style={{ color: TC.text5, fontSize: '9px' }}>{r.exchange || "NSE"}</span>
                               </div>
                             </div>
                           ))}
@@ -1457,12 +1562,15 @@ export function HoldingsScreen() {
                     {!form.identifier && !manualEntry && (
                       <div style={{
                         padding: '16px 12px', textAlign: 'center',
-                        color: TC.text5, fontSize: '10px', lineHeight: 1.7,
-                        border: `1px dashed ${TC.border}`, borderRadius: '1px',
+                        color: touched.identifier ? TC.red : TC.text5,
+                        fontSize: '10px', lineHeight: 1.7,
+                        border: `1px dashed ${touched.identifier ? TC.red + '66' : TC.border}`,
+                        borderRadius: '1px',
+                        background: touched.identifier ? TC.red + '08' : 'transparent',
                       }}>
-                        {form.type === "MF"
-                          ? "Search for a mutual fund above to get started"
-                          : "Search for a stock above to get started"
+                        {touched.identifier
+                          ? (form.type === "MF" ? "Please select a mutual fund from search above" : "Please select a stock from search above")
+                          : (form.type === "MF" ? "Search for a mutual fund above to get started" : "Search for a stock above to get started")
                         }
                       </div>
                     )}
@@ -1511,8 +1619,8 @@ export function HoldingsScreen() {
                             <button
                               onClick={() => {
                                 setInputMode("amount");
-                                if (amountValue > 0 && form.currentNav > 0) {
-                                  setForm(f => ({ ...f, units: parseFloat((amountValue / f.currentNav).toFixed(4)) }));
+                                if (form.units > 0 && form.currentNav > 0) {
+                                  setAmountValue(parseFloat((form.units * form.currentNav).toFixed(2)));
                                 }
                               }}
                               style={{
@@ -1529,7 +1637,12 @@ export function HoldingsScreen() {
                               ENTER AMOUNT ₹
                             </button>
                             <button
-                              onClick={() => { setInputMode("units"); }}
+                              onClick={() => {
+                                setInputMode("units");
+                                if (amountValue > 0 && form.currentNav > 0) {
+                                  setForm(f => ({ ...f, units: parseFloat((amountValue / f.currentNav).toFixed(4)) }));
+                                }
+                              }}
                               style={{
                                 flex: 1,
                                 padding: '7px 8px', fontSize: '10px', fontFamily: TC.font,
@@ -1553,6 +1666,7 @@ export function HoldingsScreen() {
                               type="number"
                               value={amountValue || ""}
                               onChange={v => {
+                                touch("amount");
                                 const amt = parseFloat(v) || 0;
                                 setAmountValue(amt);
                                 if (form.currentNav > 0 && amt > 0) {
@@ -1568,23 +1682,43 @@ export function HoldingsScreen() {
                                 }
                               }}
                               placeholder="e.g. 5000"
+                              style={touched.amount && errors.amount ? { borderColor: TC.red } : undefined}
                             />
+                            {touched.amount && errors.amount && (
+                              <div style={errorStyle}>{errors.amount}</div>
+                            )}
                             {/* Live calculation preview */}
                             {amountValue > 0 && form.currentNav > 0 && (
                               <div style={{
-                                marginTop: '6px', padding: '8px 10px',
+                                marginTop: '6px', padding: '10px',
                                 background: '#001A0A', border: `1px solid ${TC.green}22`,
                                 borderRadius: '1px',
                               }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <span style={{ color: TC.text4, fontSize: '9px' }}>UNITS YOU'LL GET</span>
-                                  <span style={{ color: TC.green, fontSize: '13px', fontWeight: 600 }}>
-                                    {(amountValue / form.currentNav).toFixed(4)}
+                                  <span style={{ color: TC.text4, fontSize: '9px', letterSpacing: '0.08em' }}>
+                                    {form.type === "MF" ? "UNITS YOU'LL GET" : "SHARES YOU'LL GET"}
+                                  </span>
+                                  <span style={{ color: TC.green, fontSize: '15px', fontWeight: 600, fontFamily: TC.font }}>
+                                    {form.type === "Stock"
+                                      ? Math.floor(amountValue / form.currentNav)
+                                      : (amountValue / form.currentNav).toFixed(4)
+                                    }
                                   </span>
                                 </div>
-                                <div style={{ color: TC.text5, fontSize: '9px', marginTop: '3px' }}>
+                                <div style={{ color: TC.text5, fontSize: '9px', marginTop: '4px' }}>
                                   ₹{amountValue.toLocaleString("en-IN")} ÷ ₹{form.currentNav.toFixed(2)} = {(amountValue / form.currentNav).toFixed(4)} units
                                 </div>
+                                {form.type === "MF" && (
+                                  <div style={{
+                                    marginTop: '6px', paddingTop: '6px',
+                                    borderTop: `1px solid ${TC.green}15`,
+                                    color: TC.text5, fontSize: '9px',
+                                    display: 'flex', justifyContent: 'space-between',
+                                  }}>
+                                    <span>NAV as on today</span>
+                                    <span style={{ color: TC.text3 }}>₹{form.currentNav.toFixed(2)}</span>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1598,33 +1732,50 @@ export function HoldingsScreen() {
                               type="number"
                               value={form.units || ""}
                               onChange={v => {
+                                touch("units");
                                 const u = parseFloat(v) || 0;
+                                const amt = parseFloat((u * form.currentNav).toFixed(2));
                                 setForm(f => ({
                                   ...f,
                                   units: u,
                                   avgCost: f.currentNav,
-                                  invested: u * f.currentNav,
+                                  invested: amt,
                                 }));
-                                setAmountValue(u * form.currentNav);
+                                setAmountValue(amt);
                               }}
                               placeholder={form.type === "Stock" ? "e.g. 10" : "e.g. 5.123"}
+                              style={touched.units && errors.units ? { borderColor: TC.red } : undefined}
                             />
+                            {touched.units && errors.units && (
+                              <div style={errorStyle}>{errors.units}</div>
+                            )}
                             {/* Live value preview */}
                             {form.units > 0 && form.currentNav > 0 && (
                               <div style={{
-                                marginTop: '6px', padding: '8px 10px',
+                                marginTop: '6px', padding: '10px',
                                 background: '#001A0A', border: `1px solid ${TC.green}22`,
                                 borderRadius: '1px',
                               }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <span style={{ color: TC.text4, fontSize: '9px' }}>TOTAL INVESTMENT</span>
-                                  <span style={{ color: TC.green, fontSize: '13px', fontWeight: 600 }}>
-                                    {fmtINR2(form.units * form.currentNav)}
+                                  <span style={{ color: TC.text4, fontSize: '9px', letterSpacing: '0.08em' }}>TOTAL INVESTMENT</span>
+                                  <span style={{ color: TC.green, fontSize: '15px', fontWeight: 600, fontFamily: TC.font }}>
+                                    ₹{(form.units * form.currentNav).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
                                   </span>
                                 </div>
-                                <div style={{ color: TC.text5, fontSize: '9px', marginTop: '3px' }}>
-                                  {form.units} × ₹{form.currentNav.toFixed(2)} = {fmtINR2(form.units * form.currentNav)}
+                                <div style={{ color: TC.text5, fontSize: '9px', marginTop: '4px' }}>
+                                  {form.type === "Stock" ? form.units.toFixed(0) : form.units.toFixed(4)} × ₹{form.currentNav.toFixed(2)} = {fmtINR2(form.units * form.currentNav)}
                                 </div>
+                                {form.type === "MF" && (
+                                  <div style={{
+                                    marginTop: '6px', paddingTop: '6px',
+                                    borderTop: `1px solid ${TC.green}15`,
+                                    color: TC.text5, fontSize: '9px',
+                                    display: 'flex', justifyContent: 'space-between',
+                                  }}>
+                                    <span>NAV as on today</span>
+                                    <span style={{ color: TC.text3 }}>₹{form.currentNav.toFixed(2)}</span>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1693,9 +1844,12 @@ export function HoldingsScreen() {
                           </div>
                         )}
 
-                        <TermBtn variant="primary" onClick={() => {
-                          setForm(f => ({ ...f, invested: f.units * f.avgCost }));
-                          handleAdd();
+                        <TermBtn variant="primary" disabled={!isFormValid} onClick={() => {
+                          setTouched(t => ({ ...t, amount: true, units: true, identifier: true }));
+                          if (isFormValid) {
+                            setForm(f => ({ ...f, invested: f.units * f.avgCost }));
+                            handleAdd();
+                          }
                         }}>
                           <Plus style={{ width: 11, height: 11 }} /> ADD TO PORTFOLIO
                         </TermBtn>
@@ -1720,21 +1874,47 @@ export function HoldingsScreen() {
                     {manualEntry && (
                       <>
                         <div>
-                          <label style={labelStyle}>DISPLAY NAME</label>
-                          <TermInput value={form.name} onChange={v => setForm(f => ({ ...f, name: v }))} placeholder="e.g. Parag Parikh Flexi Cap" />
+                          <label style={labelStyle}>DISPLAY NAME *</label>
+                          <TermInput
+                            value={form.name}
+                            onChange={v => { touch("name"); setForm(f => ({ ...f, name: v })); }}
+                            placeholder="e.g. Parag Parikh Flexi Cap"
+                            style={touched.name && errors.name ? { borderColor: TC.red } : undefined}
+                          />
+                          {touched.name && errors.name && <div style={errorStyle}>{errors.name}</div>}
                         </div>
                         <div>
-                          <label style={labelStyle}>{form.type === 'MF' ? 'SCHEME CODE' : 'NSE TICKER'}</label>
-                          <TermInput value={form.identifier} onChange={v => setForm(f => ({ ...f, identifier: v }))} placeholder={form.type === 'MF' ? 'e.g. 122655' : 'e.g. RELIANCE.NS'} />
+                          <label style={labelStyle}>{form.type === 'MF' ? 'SCHEME CODE *' : 'NSE TICKER *'}</label>
+                          <TermInput
+                            value={form.identifier}
+                            onChange={v => { touch("identifier"); setForm(f => ({ ...f, identifier: v })); }}
+                            placeholder={form.type === 'MF' ? 'e.g. 122655' : 'e.g. RELIANCE.NS'}
+                            style={touched.identifier && errors.identifier ? { borderColor: TC.red } : undefined}
+                          />
+                          {touched.identifier && errors.identifier && <div style={errorStyle}>{errors.identifier}</div>}
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                           <div>
-                            <label style={labelStyle}>UNITS / QTY</label>
-                            <TermInput type="number" value={form.units || ""} onChange={v => setForm(f => ({ ...f, units: parseFloat(v) || 0 }))} placeholder="0.000" />
+                            <label style={labelStyle}>UNITS / QTY *</label>
+                            <TermInput
+                              type="number"
+                              value={form.units || ""}
+                              onChange={v => { touch("units"); setForm(f => ({ ...f, units: parseFloat(v) || 0 })); }}
+                              placeholder="0.000"
+                              style={touched.units && errors.units ? { borderColor: TC.red } : undefined}
+                            />
+                            {touched.units && errors.units && <div style={errorStyle}>{errors.units}</div>}
                           </div>
                           <div>
-                            <label style={labelStyle}>AVG COST ₹</label>
-                            <TermInput type="number" value={form.avgCost || ""} onChange={v => setForm(f => ({ ...f, avgCost: parseFloat(v) || 0 }))} placeholder="0.00" />
+                            <label style={labelStyle}>AVG COST ₹ *</label>
+                            <TermInput
+                              type="number"
+                              value={form.avgCost || ""}
+                              onChange={v => { touch("avgCost"); setForm(f => ({ ...f, avgCost: parseFloat(v) || 0 })); }}
+                              placeholder="0.00"
+                              style={touched.avgCost && errors.avgCost ? { borderColor: TC.red } : undefined}
+                            />
+                            {touched.avgCost && errors.avgCost && <div style={errorStyle}>{errors.avgCost}</div>}
                           </div>
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
@@ -1755,10 +1935,13 @@ export function HoldingsScreen() {
                           <label style={labelStyle}>NOTES</label>
                           <TermInput value={form.notes} onChange={v => setForm(f => ({ ...f, notes: v }))} placeholder="Optional…" />
                         </div>
-                        <TermBtn variant="primary" onClick={() => {
-                          setForm(f => ({ ...f, invested: f.units * f.avgCost }));
-                          setManualEntry(false);
-                          handleAdd();
+                        <TermBtn variant="primary" disabled={!isFormValid} onClick={() => {
+                          setTouched(t => ({ ...t, name: true, identifier: true, units: true, avgCost: true }));
+                          if (isFormValid) {
+                            setForm(f => ({ ...f, invested: f.units * f.avgCost }));
+                            setManualEntry(false);
+                            handleAdd();
+                          }
                         }}>
                           + ADD HOLDING
                         </TermBtn>

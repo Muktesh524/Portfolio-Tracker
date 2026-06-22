@@ -4,3 +4,4 @@ mftool==3.3
 yfinance==0.2.41
 pydantic==2.8.2
 python-dotenv==1.0.1
+cachetools==5.5.0

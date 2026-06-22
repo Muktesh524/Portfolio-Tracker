@@ -15,6 +15,7 @@ from typing import Optional
 import logging
 import yfinance as yf
 from mftool import Mftool
+from cachetools import TTLCache
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("portfolio-api")
@@ -34,6 +35,13 @@ app.add_middleware(
 # Initialize mftool for MF data
 mf = Mftool()
 
+# ─── Price caches (5-minute TTL) ─────────────────────────────────────────────
+# Prevents hammering yfinance/mftool on every refresh.
+# maxsize=500 covers any realistic portfolio size many times over.
+_stock_cache: TTLCache = TTLCache(maxsize=500, ttl=300)
+_mf_cache:    TTLCache = TTLCache(maxsize=500, ttl=300)
+_index_cache: TTLCache = TTLCache(maxsize=20,  ttl=60)  # indices refresh every minute
+
 
 # ─── Reliable Stock Price Helper ─────────────────────────────────────────────
 
@@ -47,11 +55,21 @@ def normalize_ticker(ticker: str) -> str:
 def fetch_stock_price_reliable(ticker: str) -> tuple[Optional[float], Optional[str]]:
     """
     Fetch a stock price using multiple methods with fallback.
+    Results are cached for 5 minutes to avoid rate-limiting yfinance.
 
     Returns (price, error_message). On success error_message is None.
     On failure price is None and error_message describes what went wrong.
     """
+    if ticker in _stock_cache:
+        cached = _stock_cache[ticker]
+        logger.info(f"[{ticker}] cache hit: ₹{cached:.2f}")
+        return cached, None
+
     t = yf.Ticker(ticker)
+
+    def _cache_and_return(price: float) -> tuple[Optional[float], Optional[str]]:
+        _stock_cache[ticker] = price
+        return price, None
 
     # Method 1: history(period="5d") — more reliable than 1d on holidays/weekends
     try:
@@ -60,7 +78,7 @@ def fetch_stock_price_reliable(ticker: str) -> tuple[Optional[float], Optional[s
             price = float(hist["Close"].dropna().iloc[-1])
             if price > 0:
                 logger.info(f"[{ticker}] fetched via history(5d): ₹{price:.2f}")
-                return price, None
+                return _cache_and_return(price)
     except Exception as e:
         logger.warning(f"[{ticker}] history(5d) failed: {e}")
 
@@ -71,7 +89,7 @@ def fetch_stock_price_reliable(ticker: str) -> tuple[Optional[float], Optional[s
         if last is not None and float(last) > 0:
             price = float(last)
             logger.info(f"[{ticker}] fetched via fast_info: ₹{price:.2f}")
-            return price, None
+            return _cache_and_return(price)
     except Exception as e:
         logger.warning(f"[{ticker}] fast_info failed: {e}")
 
@@ -83,7 +101,7 @@ def fetch_stock_price_reliable(ticker: str) -> tuple[Optional[float], Optional[s
             if val is not None and float(val) > 0:
                 price = float(val)
                 logger.info(f"[{ticker}] fetched via info['{key}']: ₹{price:.2f}")
-                return price, None
+                return _cache_and_return(price)
     except Exception as e:
         logger.warning(f"[{ticker}] info dict failed: {e}")
 
@@ -196,13 +214,17 @@ def search_mf_schemes(q: str = Query(..., min_length=2)):
 def get_mf_nav_by_code(scheme_code: str):
     """
     Fetch latest NAV for a mutual fund by scheme code.
-    Returns NAV, scheme name, and date.
+    Results are cached for 5 minutes to avoid hammering mftool.
     """
+    if scheme_code in _mf_cache:
+        cached = _mf_cache[scheme_code]
+        logger.info(f"[MF:{scheme_code}] cache hit: NAV={cached['nav']}")
+        return cached
     try:
         data = mf.get_scheme_quote(scheme_code)
         if not data:
             raise HTTPException(status_code=404, detail=f"Scheme {scheme_code} not found")
-        return {
+        result = {
             "code": scheme_code,
             "name": data.get("scheme_name", ""),
             "nav": float(data.get("nav", 0)),
@@ -210,6 +232,8 @@ def get_mf_nav_by_code(scheme_code: str):
             "category": data.get("scheme_category", ""),
             "type": data.get("scheme_type", ""),
         }
+        _mf_cache[scheme_code] = result
+        return result
     except HTTPException:
         raise
     except Exception as e:
@@ -490,12 +514,18 @@ def get_portfolio_snapshot(holdings: dict):
     stock_prices = {}
     errors = {}
 
-    # Fetch MF NAVs
+    # Fetch MF NAVs (with cache)
     for isin in mf_isins:
+        if isin in _mf_cache:
+            mf_navs[isin] = _mf_cache[isin]["nav"]
+            logger.info(f"[MF:{isin}] snapshot cache hit")
+            continue
         try:
             scheme_data = mf.get_scheme_quote(isin)
             if scheme_data:
-                mf_navs[isin] = float(scheme_data.get("nav", 0))
+                nav = float(scheme_data.get("nav", 0))
+                mf_navs[isin] = nav
+                _mf_cache[isin] = {"nav": nav, "code": isin, "name": scheme_data.get("scheme_name", ""), "date": scheme_data.get("date", "")}
             else:
                 errors[isin] = "MF not found"
         except Exception as e:

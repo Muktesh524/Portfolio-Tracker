@@ -228,7 +228,7 @@ export function HoldingsScreen() {
   const actions  = useHoldingActions();
   const [form,     setForm]        = useState<Omit<Holding, "id">>({ ...BLANK });
   const [showForm, setShowForm]    = useState(false);
-  const [editId,   setEditId]      = useState<number | null>(null);
+  const [editId,   setEditId]      = useState<string | null>(null);
   const [search,   setSearch]      = useState("");
   const [sortKey,  setSortKey]     = useState<SortKey>("currentValue");
   const [sortDir,  setSortDir]     = useState<"asc" | "desc">("desc");
@@ -314,14 +314,14 @@ export function HoldingsScreen() {
     setShowForm(true);
   }
 
-  function handleDelete(id: number) {
+  function handleDelete(id: string) {
     actions.remove(id);
     toast("Holding removed");
   }
 
   // ── Inline field update ─────────────────────────────────────────────────────
 
-  function updateField(id: number, field: keyof Holding, raw: string) {
+  function updateField(id: string, field: keyof Holding, raw: string) {
     const h = holdings.find(x => x.id === id);
     if (!h) return;
     const numVal = parseFloat(raw);
@@ -402,7 +402,7 @@ export function HoldingsScreen() {
       }
 
       if (imported.length > 0) {
-        const withIds = imported.map((h, i) => ({ ...h, id: Date.now() + i }));
+        const withIds = imported.map((h) => ({ ...h, id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}` }));
         actions.set([...holdings, ...withIds]);
         toast.success(`Imported ${imported.length} holding(s)`, {
           description: skipped > 0 ? `${skipped} duplicate(s) skipped` : undefined,

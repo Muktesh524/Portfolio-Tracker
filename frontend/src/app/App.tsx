@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { Toaster } from "sonner";
 import { Activity, BarChart2, BookOpen, Lightbulb, ChevronLeft, ChevronRight, LogOut, Loader2 } from "lucide-react";
 import { TC } from "./components/TerminalShared";
-import { usePortfolioSummary } from "./store";
+import { usePortfolioSummary, initForUser, teardown } from "./store";
 import { fmtINR, fmtINR2, fmtPct, gainColor } from "./components/TerminalShared";
 import { fetchIndices, type IndexData } from "./api";
 import { useAuth } from "./AuthContext";
@@ -117,6 +117,42 @@ export default function App() {
 
   // Not logged in — show login screen
   if (!user) return <LoginScreen />;
+
+  return <AppWithFirestore user={user} logout={logout} />;
+}
+
+/**
+ * Intermediate component: initialises Firestore for the logged-in user
+ * and shows a loading state while the first sync completes.
+ */
+function AppWithFirestore({ user, logout }: { user: { uid: string; email: string | null }; logout: () => Promise<void> }) {
+  const [storeReady, setStoreReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    initForUser(user.uid).finally(() => {
+      if (!cancelled) setStoreReady(true);
+    });
+    return () => {
+      cancelled = true;
+      teardown();
+    };
+  }, [user.uid]);
+
+  if (!storeReady) {
+    return (
+      <div style={{
+        width: '100%', height: '100vh', background: TC.bg0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: TC.font,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <Loader2 style={{ width: 16, height: 16, color: TC.green, animation: 'spin 1s linear infinite' }} />
+          <span style={{ color: TC.text4, fontSize: '11px', letterSpacing: '0.08em' }}>SYNCING PORTFOLIO…</span>
+        </div>
+      </div>
+    );
+  }
 
   return <AppDashboard user={user} logout={logout} />;
 }

@@ -46,7 +46,7 @@ export const SECTOR_COLORS: Record<string, string> = {
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
 export interface Holding {
-  id: number;
+  id: string;
   type: 'MF' | 'Stock';
   name: string;
   shortName: string;
@@ -68,19 +68,19 @@ export interface ComputedHolding extends Holding {
 // ─── Static portfolio data ────────────────────────────────────────────────────
 
 export const HOLDINGS: Holding[] = [
-  { id:1,  type:'MF',    name:'Parag Parikh Flexi Cap Fund – Dir Gr',  shortName:'PP Flexi Cap',    identifier:'122655',      units:36.42,  avgCost:82.37,   currentNav:92.14,   sector:'Flexi Cap', invested:2999.0,  notes:'Core holding' },
-  { id:2,  type:'MF',    name:'UTI Nifty 50 Index Fund – Dir Gr',      shortName:'UTI Nifty 50',    identifier:'120716',      units:18.03,  avgCost:138.66,  currentNav:152.34,  sector:'Index',     invested:2500.0,  notes:'SIP ₹500/mo' },
-  { id:3,  type:'MF',    name:'Mirae Asset Large Cap Fund – Dir Gr',   shortName:'Mirae Large Cap', identifier:'118989',      units:18.41,  avgCost:108.64,  currentNav:118.92,  sector:'Large Cap', invested:1999.0,  notes:'' },
-  { id:4,  type:'MF',    name:'Axis Small Cap Fund – Dir Gr',          shortName:'Axis Small Cap',  identifier:'125494',      units:15.74,  avgCost:95.33,   currentNav:88.44,   sector:'Small Cap', invested:1500.0,  notes:'High risk' },
-  { id:5,  type:'MF',    name:'HDFC Mid-Cap Opportunities – Dir Gr',   shortName:'HDFC Mid Cap',    identifier:'118825',      units:22.24,  avgCost:112.38,  currentNav:128.66,  sector:'Mid Cap',   invested:2499.0,  notes:'' },
-  { id:6,  type:'MF',    name:'SBI Contra Fund – Dir Gr',              shortName:'SBI Contra',      identifier:'100025',      units:20.13,  avgCost:89.44,   currentNav:98.77,   sector:'Contra',    invested:1800.0,  notes:'' },
-  { id:7,  type:'MF',    name:'Nippon India Small Cap Fund – Dir Gr',  shortName:'Nippon Small Cap',identifier:'118550',      units:23.77,  avgCost:84.15,   currentNav:89.22,   sector:'Small Cap', invested:2000.0,  notes:'' },
-  { id:8,  type:'MF',    name:'DSP Tax Saver Fund (ELSS) – Dir Gr',    shortName:'DSP Tax Saver',   identifier:'102885',      units:14.31,  avgCost:104.77,  currentNav:112.34,  sector:'ELSS',      invested:1499.0,  notes:'80C lock-in' },
-  { id:9,  type:'MF',    name:'Canara Robeco Emerging Equities – Dir', shortName:'Canara Robeco EE',identifier:'101230',      units:9.53,   avgCost:188.88,  currentNav:204.12,  sector:'Mid Cap',   invested:1800.0,  notes:'' },
-  { id:10, type:'MF',    name:'Motilal Oswal Nifty 500 Index – Dir',   shortName:'MO Nifty 500',    identifier:'147663',      units:108.37, avgCost:22.14,   currentNav:24.88,   sector:'Index',     invested:2399.0,  notes:'Broad market' },
-  { id:11, type:'Stock', name:'Reliance Industries Ltd',                shortName:'RELIANCE',        identifier:'RELIANCE.NS', units:1,      avgCost:2847.50, currentNav:3142.60, sector:'Energy',    invested:2847.50, notes:'Long term' },
-  { id:12, type:'Stock', name:'Infosys Ltd',                            shortName:'INFY',            identifier:'INFY.NS',     units:3,      avgCost:1542.30, currentNav:1648.90, sector:'IT',        invested:4626.90, notes:'' },
-  { id:13, type:'Stock', name:'HDFC Bank Ltd',                          shortName:'HDFCBANK',        identifier:'HDFCBANK.NS', units:1,      avgCost:1623.40, currentNav:1724.40, sector:'Banking',   invested:1623.40, notes:'' },
+  { id:'demo-1',  type:'MF',    name:'Parag Parikh Flexi Cap Fund – Dir Gr',  shortName:'PP Flexi Cap',    identifier:'122655',      units:36.42,  avgCost:82.37,   currentNav:92.14,   sector:'Flexi Cap', invested:2999.0,  notes:'Core holding' },
+  { id:'demo-2',  type:'MF',    name:'UTI Nifty 50 Index Fund – Dir Gr',      shortName:'UTI Nifty 50',    identifier:'120716',      units:18.03,  avgCost:138.66,  currentNav:152.34,  sector:'Index',     invested:2500.0,  notes:'SIP ₹500/mo' },
+  { id:'demo-3',  type:'MF',    name:'Mirae Asset Large Cap Fund – Dir Gr',   shortName:'Mirae Large Cap', identifier:'118989',      units:18.41,  avgCost:108.64,  currentNav:118.92,  sector:'Large Cap', invested:1999.0,  notes:'' },
+  { id:'demo-4',  type:'MF',    name:'Axis Small Cap Fund – Dir Gr',          shortName:'Axis Small Cap',  identifier:'125494',      units:15.74,  avgCost:95.33,   currentNav:88.44,   sector:'Small Cap', invested:1500.0,  notes:'High risk' },
+  { id:'demo-5',  type:'MF',    name:'HDFC Mid-Cap Opportunities – Dir Gr',   shortName:'HDFC Mid Cap',    identifier:'118825',      units:22.24,  avgCost:112.38,  currentNav:128.66,  sector:'Mid Cap',   invested:2499.0,  notes:'' },
+  { id:'demo-6',  type:'MF',    name:'SBI Contra Fund – Dir Gr',              shortName:'SBI Contra',      identifier:'100025',      units:20.13,  avgCost:89.44,   currentNav:98.77,   sector:'Contra',    invested:1800.0,  notes:'' },
+  { id:'demo-7',  type:'MF',    name:'Nippon India Small Cap Fund – Dir Gr',  shortName:'Nippon Small Cap',identifier:'118550',      units:23.77,  avgCost:84.15,   currentNav:89.22,   sector:'Small Cap', invested:2000.0,  notes:'' },
+  { id:'demo-8',  type:'MF',    name:'DSP Tax Saver Fund (ELSS) – Dir Gr',    shortName:'DSP Tax Saver',   identifier:'102885',      units:14.31,  avgCost:104.77,  currentNav:112.34,  sector:'ELSS',      invested:1499.0,  notes:'80C lock-in' },
+  { id:'demo-9',  type:'MF',    name:'Canara Robeco Emerging Equities – Dir', shortName:'Canara Robeco EE',identifier:'101230',      units:9.53,   avgCost:188.88,  currentNav:204.12,  sector:'Mid Cap',   invested:1800.0,  notes:'' },
+  { id:'demo-10', type:'MF',    name:'Motilal Oswal Nifty 500 Index – Dir',   shortName:'MO Nifty 500',    identifier:'147663',      units:108.37, avgCost:22.14,   currentNav:24.88,   sector:'Index',     invested:2399.0,  notes:'Broad market' },
+  { id:'demo-11', type:'Stock', name:'Reliance Industries Ltd',                shortName:'RELIANCE',        identifier:'RELIANCE.NS', units:1,      avgCost:2847.50, currentNav:3142.60, sector:'Energy',    invested:2847.50, notes:'Long term' },
+  { id:'demo-12', type:'Stock', name:'Infosys Ltd',                            shortName:'INFY',            identifier:'INFY.NS',     units:3,      avgCost:1542.30, currentNav:1648.90, sector:'IT',        invested:4626.90, notes:'' },
+  { id:'demo-13', type:'Stock', name:'HDFC Bank Ltd',                          shortName:'HDFCBANK',        identifier:'HDFCBANK.NS', units:1,      avgCost:1623.40, currentNav:1724.40, sector:'Banking',   invested:1623.40, notes:'' },
 ];
 
 // ─── Portfolio computation helpers ────────────────────────────────────────────
